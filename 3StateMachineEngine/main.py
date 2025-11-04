@@ -22,6 +22,12 @@ DATA_START = "1950-01-01"
 DATA_END = None  # None => today
 
 # === Hedge overlay config ===
+# Match hedge leverage to main-leg leverage
+HEDGE_LEVERAGE_BY_ASSET = {
+    "TQQQ": -3.0,  # hedge 3x legs with ~-3x
+    "QLD":  -2.0,  # hedge 2x legs with ~-2x
+}
+
 # Min hold time to reduce hedge churn (days)
 HEDGE_MIN_HOLD_ON_DAYS = (
     2  # require ≥2 consecutive days hedged before allowing turn-off
@@ -30,19 +36,15 @@ HEDGE_MIN_HOLD_OFF_DAYS = (
     2  # require ≥2 consecutive days unhedged before allowing turn-on
 )
 # --- Low-risk improvements ---
-HEDGE_SD_SCALE = (
-    0.9  # try 0.9 first (10% narrower); 0.85 if still too rare
-)
-HEDGE_SLOPE_ESCALATION = (
-    True  # only allow 1/2 hedge when channel slope <= threshold
-)
-HEDGE_SLOPE_LOOKBACK_D = 5  # days to compute midline slope
-HEDGE_SLOPE_THRESH = 0.0  # require slope <= 0 for escalation
+HEDGE_SD_SCALE = 0.9
+HEDGE_SLOPE_ESCALATION = True
+HEDGE_SLOPE_LOOKBACK_D = 5
+HEDGE_SLOPE_THRESH = 0.0
 
-HEDGE_VOL_AWARE_EPS = True  # scale eps bands by recent realized vol
-HEDGE_VOL_LOOKBACK_D = 20  # lookback for realized vol
-HEDGE_VOL_EPS_MIN = 0.5  # min scale factor
-HEDGE_VOL_EPS_MAX = 2.0  # max scale factor
+HEDGE_VOL_AWARE_EPS = True
+HEDGE_VOL_LOOKBACK_D = 20
+HEDGE_VOL_EPS_MIN = 0.5
+HEDGE_VOL_EPS_MAX = 2.0
 
 HEDGE_CAP_AVOID_NET_SHORT = (
     True  # cap w to avoid net short in 2x regime (e.g., QLD)
@@ -53,7 +55,6 @@ HEDGE_SLOPE_ESCALATION = (
 HEDGE_SLOPE_LOOKBACK_D = 5  # slope lookback in days
 HEDGE_SLOPE_THRESH = 0.0  # require midline_slope <= 0 to allow 1/2
 
-HEDGE_VOL_AWARE_EPS = True  # make eps bands vol-aware to cut churn
 HEDGE_VOL_LOOKBACK_D = 20  # realized vol lookback
 HEDGE_VOL_EPS_MIN = 0.5  # min scaling of eps
 HEDGE_VOL_EPS_MAX = 2.0  # max scaling of eps
@@ -80,10 +81,10 @@ HEDGE_W_HIGH = 0.50  # 1/2 overlay if above UB4 (with hysteresis)
 HEDGE_SLIPPAGE_ON_ADJUST = True
 
 # WALK FORWARD BACKTEST
-DO_WALK_FORWARD = False
+DO_WALK_FORWARD = True
 
-WF_START_DATE = "1962-01-01"
-WF_END_DATE = "1979-12-31"
+WF_START_DATE = "2000-01-01"
+WF_END_DATE = "2025-01-01"
 WF_TRAIN_YEARS = 2
 WF_TEST_YEARS = 1
 WF_USE_PAPER = True
@@ -195,17 +196,24 @@ lineup_syms = set(
 # Helpers (LR channel + hedge weight)
 # =========================
 
+def hedge_series_for_asset(asset: str):
+    lev = HEDGE_LEVERAGE_BY_ASSET.get(asset, HEDGE_LEVERAGE)
+    if math.isclose(abs(lev), 3.0):
+        return gap_INV_m3, intra_INV_m3
+    if math.isclose(abs(lev), 2.0):
+        return gap_INV_m2, intra_INV_m2
+    g, i = build_inv_ndx_returns(lev)
+    return g, i
 
 def cap_w_for_asset(w: float, asset: str) -> float:
     if not (USE_HEDGE_OVERLAY and HEDGE_CAP_AVOID_NET_SHORT):
         return w
-    # Main-leg leverage map (approx); hedge leg is |HEDGE_LEVERAGE|
     L_map = {"TQQQ": 3.0, "QLD": 2.0}
-    H_abs = abs(HEDGE_LEVERAGE)
-    L = L_map.get(asset, None)
+    L = L_map.get(asset)
     if L is None:
         return w
-    w_cap = L / (L + H_abs)  # max w to avoid net short
+    H_abs = abs(HEDGE_LEVERAGE_BY_ASSET.get(asset, HEDGE_LEVERAGE))
+    w_cap = L / (L + H_abs)
     return min(w, w_cap)
 
 
@@ -837,6 +845,7 @@ def build_asset_returns_SSO():
 
 
 def build_inv_ndx_returns(lev=-3.0):
+    
     base_gap, base_intra = seg_returns(ndx_ao, ndx_ac)
     proxy_gap = (lev * base_gap).clip(lower=-0.95).fillna(0.0)
     den = (1.0 + proxy_gap).replace(-1.0, -0.999999)
@@ -862,7 +871,9 @@ gap_QLD, intra_QLD, prox_mask_QLD = build_asset_returns_QLD()
 gap_SSO, intra_SSO, prox_mask_SSO = build_asset_returns_SSO()
 
 # Hedge instrument (SQQQ ~ -3x NDX)
-gap_SQQQ, intra_SQQQ = build_inv_ndx_returns(HEDGE_LEVERAGE)
+# Hedge instruments (~inverse NDX proxies)
+gap_INV_m3, intra_INV_m3 = build_inv_ndx_returns(-3.0)  # ~SQQQ
+gap_INV_m2, intra_INV_m2 = build_inv_ndx_returns(-2.0)  # ~QID
 
 prox_mask_GLD = prox_mask_GLD.reindex(idx).fillna(False).astype(bool)
 prox_mask_TQQQ = (
@@ -1436,49 +1447,37 @@ def proxy_drag(asset, d):
 
 
 def sim_strategy(run_idx, paper=False):
-    gap_map = {
-        "TQQQ": gap_TQQQ,
-        "SPXL": gap_SPXL,
-        "QLD": gap_QLD,
-        "SSO": gap_SSO,
-        "GLD": gap_GLD,
-    }
-    intra_map = {
-        "TQQQ": intra_TQQQ,
-        "SPXL": intra_SPXL,
-        "QLD": intra_QLD,
-        "SSO": intra_SSO,
-        "GLD": intra_GLD,
-    }
+    # Core maps
+    gap_map   = {"TQQQ": gap_TQQQ, "SPXL": gap_SPXL, "QLD": gap_QLD, "SSO": gap_SSO, "GLD": gap_GLD}
+    intra_map = {"TQQQ": intra_TQQQ, "SPXL": intra_SPXL, "QLD": intra_QLD, "SSO": intra_SSO, "GLD": intra_GLD}
     if globals().get("HAVE_IEF", False):
         gap_map["IEF"] = gap_IEF
         intra_map["IEF"] = intra_IEF
 
-    # Add extra lineup symbols so schedule fallback (if ever used) can value correctly
+    # Extra lineup symbols so schedule fallback can value correctly
     gap_extra, intra_extra = {}, {}
-    extra_syms = sorted(
-        lineup_syms - {"TQQQ", "SPXL", "QLD", "SSO", "GLD", "IEF"}
-    )
+    extra_syms = sorted(lineup_syms - {"TQQQ", "SPXL", "QLD", "SSO", "GLD", "IEF"})
     for sym in extra_syms:
         try:
             ao_e, ac_e, _ = get_adj_ohlc(px, sym, idx)
             g_e, i_e = seg_returns(ao_e, ac_e)
-            gap_extra[sym] = g_e.fillna(0.0)
+            gap_extra[sym]   = g_e.fillna(0.0)
             intra_extra[sym] = i_e.fillna(0.0)
         except Exception:
-            gap_extra[sym] = pd.Series(0.0, index=idx)
+            gap_extra[sym]   = pd.Series(0.0, index=idx)
             intra_extra[sym] = pd.Series(0.0, index=idx)
     gap_map.update(gap_extra)
     intra_map.update(intra_extra)
 
+    # Build schedule for the run
     sched = build_locked_schedule(run_idx)
 
     # Hedge weights for this run (use prior close -> apply at today's open)
-    hw_all = (
-        hedge_w_series
-        if USE_HEDGE_OVERLAY
-        else pd.Series(0.0, index=idx)
-    )
+    hw_all = hedge_w_series if (USE_HEDGE_OVERLAY and 'hedge_w_series' in globals()) else pd.Series(0.0, index=idx)
+
+    # Always use your per-asset inverse series
+    def _get_gap_intra_for_asset(asset: str):
+        return hedge_series_for_asset(asset)
 
     if paper:
         eq = START_CAPITAL
@@ -1486,117 +1485,330 @@ def sim_strategy(run_idx, paper=False):
         daily_index = []
         curr_asset = None
         prev_asset = None
-        prev_w = 0.0  # yesterday's weight (applies to today's gap)
+        prev_w = 0.0  # yesterday's hedge weight
 
         for i, d in enumerate(run_idx):
             next_asset = sched.loc[d]
 
-            # First day: no gap leg
+            # First day: no gap; apply intra with today's hedge
             if curr_asset is None:
                 curr_asset = next_asset
-                # Today's hedge weight decided at prior close
-                w_today = (
-                    float(hw_all.shift(1).get(d, 0.0))
-                    if (
-                        USE_HEDGE_OVERLAY
-                        and curr_asset in HEDGE_APPLIES_TO
-                    )
-                    else 0.0
-                )
+                # Decide today's hedge at prior close and cap it
+                w_today = float(hw_all.shift(1).get(d, 0.0)) if (USE_HEDGE_OVERLAY and curr_asset in HEDGE_APPLIES_TO) else 0.0
                 w_today = cap_w_for_asset(w_today, curr_asset)
-                # Slippage on hedge adjust at open (entering weight from 0 -> w_today)
-                if (
-                    USE_HEDGE_OVERLAY
-                    and HEDGE_SLIPPAGE_ON_ADJUST
-                    and not np.isclose(w_today, prev_w, atol=1e-12)
-                ):
-                    eq *= 1.0 - trade_cost(d, is_hedge_adjust=True)
-                # Intra (weighted)
+                # Hedge slippage at open if entering weight
+                if USE_HEDGE_OVERLAY and HEDGE_SLIPPAGE_ON_ADJUST and not np.isclose(w_today, prev_w, atol=1e-12):
+                    eq *= (1.0 - trade_cost(d, is_hedge_adjust=True))
+                # INTRA (weighted, drag on main portion)
                 i_m = float(intra_map[curr_asset].get(d, 0.0))
-                i_h = (
-                    float(intra_SQQQ.get(d, 0.0))
-                    if USE_HEDGE_OVERLAY
-                    else 0.0
-                )
-                intra_factor = (1.0 - w_today) * (1.0 + i_m) + (
-                    w_today
-                ) * (1.0 + i_h)
+                drag = proxy_drag(curr_asset, d)
+                if USE_HEDGE_OVERLAY and (curr_asset in HEDGE_APPLIES_TO) and (w_today > 0.0):
+                    _, intra_h = _get_gap_intra_for_asset(curr_asset)
+                    i_h = float(intra_h.get(d, 0.0))
+                else:
+                    i_h = 0.0
+                intra_factor = (1.0 - w_today) * (drag * (1.0 + i_m)) + (w_today) * (1.0 + i_h)
                 eq *= intra_factor
 
-                equity_curve.append(eq)
-                daily_index.append(d)
+                equity_curve.append(eq); daily_index.append(d)
                 prev_w = w_today
                 prev_asset = curr_asset
                 continue
 
-            # GAP leg: use yesterday's asset and yesterday's weight
+            # GAP leg: use yesterday's asset and yesterday's weight/hedge
             g_m = float(gap_map[curr_asset].get(d, 0.0))
-            g_h = (
-                float(gap_SQQQ.get(d, 0.0))
-                if USE_HEDGE_OVERLAY
-                else 0.0
-            )
-            w_gap = (
-                prev_w
-                if (
-                    USE_HEDGE_OVERLAY
-                    and (prev_asset in HEDGE_APPLIES_TO)
-                )
-                else 0.0
-            )
-            gap_factor = (1.0 - w_gap) * (1.0 + g_m) + (w_gap) * (
-                1.0 + g_h
-            )
+            if USE_HEDGE_OVERLAY and (prev_asset in HEDGE_APPLIES_TO) and (prev_w > 0.0):
+                gap_h, _ = _get_gap_intra_for_asset(prev_asset)
+                g_h = float(gap_h.get(d, 0.0))
+                w_gap = prev_w
+            else:
+                g_h = 0.0
+                w_gap = 0.0
+            gap_factor = (1.0 - w_gap) * (1.0 + g_m) + (w_gap) * (1.0 + g_h)
             eq *= gap_factor
 
             # Swap main asset at open if needed
             if next_asset != curr_asset:
                 curr_asset = next_asset
 
-            # Today's hedge weight (decided prior close)
-            w_today = (
-                float(hw_all.shift(1).get(d, 0.0))
-                if (
-                    USE_HEDGE_OVERLAY
-                    and curr_asset in HEDGE_APPLIES_TO
-                )
-                else 0.0
-            )
+            # Today's hedge weight (decided prior close), capped; slippage if changed vs w_gap
+            w_today = float(hw_all.shift(1).get(d, 0.0)) if (USE_HEDGE_OVERLAY and curr_asset in HEDGE_APPLIES_TO) else 0.0
             w_today = cap_w_for_asset(w_today, curr_asset)
+            if USE_HEDGE_OVERLAY and HEDGE_SLIPPAGE_ON_ADJUST and not np.isclose(w_today, w_gap, atol=1e-12):
+                eq *= (1.0 - trade_cost(d, is_hedge_adjust=True))
 
-            # Slippage if hedge weight changed at open
-            if (
-                USE_HEDGE_OVERLAY
-                and HEDGE_SLIPPAGE_ON_ADJUST
-                and not np.isclose(w_today, w_gap, atol=1e-12)
-            ):
-                eq *= 1.0 - trade_cost(d, is_hedge_adjust=True)
-
-            # INTRA leg: weighted
+            # INTRA (weighted, drag on main portion)
             i_m = float(intra_map[curr_asset].get(d, 0.0))
-            i_h = (
-                float(intra_SQQQ.get(d, 0.0))
-                if USE_HEDGE_OVERLAY
-                else 0.0
-            )
-            intra_factor = (1.0 - w_today) * (1.0 + i_m) + (
-                w_today
-            ) * (1.0 + i_h)
+            drag = proxy_drag(curr_asset, d)
+            if USE_HEDGE_OVERLAY and (curr_asset in HEDGE_APPLIES_TO) and (w_today > 0.0):
+                _, intra_h = _get_gap_intra_for_asset(curr_asset)
+                i_h = float(intra_h.get(d, 0.0))
+            else:
+                i_h = 0.0
+            intra_factor = (1.0 - w_today) * (drag * (1.0 + i_m)) + (w_today) * (1.0 + i_h)
             eq *= intra_factor
 
-            equity_curve.append(eq)
-            daily_index.append(d)
+            equity_curve.append(eq); daily_index.append(d)
             prev_w = w_today
             prev_asset = curr_asset
 
-        return {
-            "equity_curve": pd.Series(
-                equity_curve, index=pd.DatetimeIndex(daily_index)
-            )
-        }
+        return {"equity_curve": pd.Series(equity_curve, index=pd.DatetimeIndex(daily_index))}
+
+    else:
+        # REAL branch (taxes)
+        eq_pre   = START_CAPITAL
+        eq_after = START_CAPITAL
+        equity_curve = []
+        daily_index = []
+
+        curr_asset = None
+        prev_asset = None
+        entry_date = None
+        entry_eq_pre_after_buy = 0.0
+        cum_div_leg_pre = 0.0
+
+        realized_ST = defaultdict(float)
+        realized_LT = defaultdict(float)
+        carry_ST = 0.0; carry_LT = 0.0
+        div_tax_by_year = defaultdict(float)
+
+        eq_pre_prev_close = None
+        prev_d = None
+        prev_w = 0.0
+
+        for i, d in enumerate(run_idx):
+            y = d.year
+            next_asset = sched.loc[d]
+
+            if curr_asset is None:
+                curr_asset = next_asset
+                # Main trade cost to enter
+                c = trade_cost(d)
+                eq_pre   *= (1.0 - c)
+                eq_after *= (1.0 - c)
+                entry_date = d
+                entry_eq_pre_after_buy = eq_pre
+                cum_div_leg_pre = 0.0
+
+                # Hedge weight (decided prior close), cap, slippage if entering
+                w_today = float(hw_all.shift(1).get(d, 0.0)) if (USE_HEDGE_OVERLAY and curr_asset in HEDGE_APPLIES_TO) else 0.0
+                w_today = cap_w_for_asset(w_today, curr_asset)
+                if USE_HEDGE_OVERLAY and HEDGE_SLIPPAGE_ON_ADJUST and not np.isclose(w_today, prev_w, atol=1e-12):
+                    c = trade_cost(d, is_hedge_adjust=True)
+                    eq_pre   *= (1.0 - c)
+                    eq_after *= (1.0 - c)
+
+                # INTRA weighted, drag on main portion
+                i_m = float(intra_map[curr_asset].get(d, 0.0))
+                drag = proxy_drag(curr_asset, d)
+                if USE_HEDGE_OVERLAY and (curr_asset in HEDGE_APPLIES_TO) and (w_today > 0.0):
+                    _, intra_h = _get_gap_intra_for_asset(curr_asset)
+                    i_h = float(intra_h.get(d, 0.0))
+                else:
+                    i_h = 0.0
+                intra_factor = (1.0 - w_today) * (drag * (1.0 + i_m)) + (w_today) * (1.0 + i_h)
+                eq_pre   *= intra_factor
+                eq_after *= intra_factor
+
+                equity_curve.append(eq_after); daily_index.append(d)
+                eq_pre_prev_close = eq_pre
+                prev_d = d
+                prev_w = w_today
+                prev_asset = curr_asset
+                continue
+
+            # Dividends (main asset only)
+            div_amt = float(div_series.get(curr_asset, pd.Series(0.0, index=run_idx)).loc[d])
+            if div_amt != 0.0 and prev_d is not None:
+                prev_close_raw = raw_close[curr_asset].loc[prev_d]
+                if pd.notna(prev_close_raw) and prev_close_raw != 0.0 and eq_pre_prev_close is not None:
+                    div_cash = float(eq_pre_prev_close) * (div_amt / float(prev_close_raw))
+                    div_tax  = DIV_TAX_RATE * div_cash
+                    eq_after -= div_tax
+                    div_tax_by_year[y] += div_tax
+                    cum_div_leg_pre += div_cash
+
+            # GAP weighted using yesterday's weight and yesterday's asset-matched hedge
+            g_m = float(gap_map[curr_asset].get(d, 0.0))
+            if USE_HEDGE_OVERLAY and (prev_asset in HEDGE_APPLIES_TO) and (prev_w > 0.0):
+                gap_h, _ = _get_gap_intra_for_asset(prev_asset)
+                g_h = float(gap_h.get(d, 0.0))
+                w_gap = prev_w
+            else:
+                g_h = 0.0
+                w_gap = 0.0
+            gap_factor = (1.0 - w_gap) * (1.0 + g_m) + (w_gap) * (1.0 + g_h)
+            eq_pre   *= gap_factor
+            eq_after *= gap_factor
+
+            # Swap main asset at open
+            if next_asset != curr_asset:
+                # Exit cost
+                c = trade_cost(d)
+                eq_pre   *= (1.0 - c)
+                eq_after *= (1.0 - c)
+
+                # Realize gains/losses on the leg
+                hold_days = (d - entry_date).days
+                realized_pre = eq_pre - entry_eq_pre_after_buy - cum_div_leg_pre
+                if hold_days > 365:
+                    realized_LT[y] += realized_pre
+                else:
+                    realized_ST[y] += realized_pre
+
+                # Enter new leg
+                curr_asset = next_asset
+                c = trade_cost(d)
+                eq_pre   *= (1.0 - c)
+                eq_after *= (1.0 - c)
+
+                entry_date = d
+                entry_eq_pre_after_buy = eq_pre
+                cum_div_leg_pre = 0.0
+
+            # Today's hedge weight (prior close), cap, slippage if changed vs w_gap
+            w_today = float(hw_all.shift(1).get(d, 0.0)) if (USE_HEDGE_OVERLAY and curr_asset in HEDGE_APPLIES_TO) else 0.0
+            w_today = cap_w_for_asset(w_today, curr_asset)
+            if USE_HEDGE_OVERLAY and HEDGE_SLIPPAGE_ON_ADJUST and not np.isclose(w_today, w_gap, atol=1e-12):
+                c = trade_cost(d, is_hedge_adjust=True)
+                eq_pre   *= (1.0 - c)
+                eq_after *= (1.0 - c)
+
+            # INTRA weighted, drag on main portion
+            i_m = float(intra_map[curr_asset].get(d, 0.0))
+            drag = proxy_drag(curr_asset, d)
+            if USE_HEDGE_OVERLAY and (curr_asset in HEDGE_APPLIES_TO) and (w_today > 0.0):
+                _, intra_h = _get_gap_intra_for_asset(curr_asset)
+                i_h = float(intra_h.get(d, 0.0))
+            else:
+                i_h = 0.0
+            intra_factor = (1.0 - w_today) * (drag * (1.0 + i_m)) + (w_today) * (1.0 + i_h)
+            eq_pre   *= intra_factor
+            eq_after *= intra_factor
+
+            # Year-end taxes
+            is_year_end = (i == len(run_idx) - 1) or (run_idx[i + 1].year != y)
+            if is_year_end:
+                st = realized_ST[y] + carry_ST
+                lt = realized_LT[y] + carry_LT
+                if st > 0 and lt < 0:
+                    off = min(st, -lt); st -= off; lt += off
+                elif st < 0 and lt > 0:
+                    off = min(lt, -st); lt -= off; st += off
+
+                tax_cap = 0.0; new_cf_st = 0.0; new_cf_lt = 0.0
+                if st >= 0 and lt >= 0:
+                    tax_cap = ST_RATE * st + LT_RATE * lt
+                elif st <= 0 and lt <= 0:
+                    net_loss = -(st + lt)
+                    deduct = min(LOSS_DED_CAP, net_loss)
+                    tax_cap = -ORD_RATE * deduct
+                    rem = net_loss - deduct
+                    mag_st = -st; mag_lt = -lt
+                    if (mag_st + mag_lt) > 0:
+                        share_st = rem * (mag_st / (mag_st + mag_lt))
+                        share_lt = rem - share_st
+                        new_cf_st = -share_st
+                        new_cf_lt = -share_lt
+                else:
+                    if st > 0: tax_cap += ST_RATE * st
+                    if lt > 0: tax_cap += LT_RATE * lt
+
+                eq_after -= tax_cap
+                carry_ST, carry_LT = new_cf_st, new_cf_lt
+                eq_pre = eq_after
+
+            equity_curve.append(eq_after); daily_index.append(d)
+            eq_pre_prev_close = eq_pre
+            prev_d = d
+            prev_w = w_today
+            prev_asset = curr_asset
+
+        equity_curve = pd.Series(equity_curve, index=pd.DatetimeIndex(daily_index))
+        return {"equity_curve": equity_curve}
+
+
+# Small helper: pick the correct inverse series for the asset
+def _get_gap_intra_for_asset(asset: str):
+    return hedge_series_for_asset(asset)
+
+    if paper:
+        eq = START_CAPITAL
+        equity_curve = []
+        daily_index = []
+        curr_asset = None
+        prev_asset = None
+        prev_w = 0.0  # yesterday's hedge weight
+
+        for i, d in enumerate(run_idx):
+            next_asset = sched.loc[d]
+
+            # First day: no gap; apply intra with today's hedge
+            if curr_asset is None:
+                curr_asset = next_asset
+                # Decide today's hedge at prior close and cap it
+                w_today = float(hw_all.shift(1).get(d, 0.0)) if (USE_HEDGE_OVERLAY and curr_asset in HEDGE_APPLIES_TO) else 0.0
+                w_today = cap_w_for_asset(w_today, curr_asset)
+                # Hedge slippage at open if entering weight
+                if USE_HEDGE_OVERLAY and HEDGE_SLIPPAGE_ON_ADJUST and not np.isclose(w_today, prev_w, atol=1e-12):
+                    eq *= (1.0 - trade_cost(d, is_hedge_adjust=True))
+                # INTRA (weighted, drag on main portion)
+                i_m = float(intra_map[curr_asset].get(d, 0.0))
+                drag = proxy_drag(curr_asset, d)
+                if USE_HEDGE_OVERLAY and (curr_asset in HEDGE_APPLIES_TO):
+                    _, intra_h = _get_gap_intra_for_asset(curr_asset)
+                    i_h = float(intra_h.get(d, 0.0))
+                else:
+                    i_h = 0.0
+                intra_factor = (1.0 - w_today) * (drag * (1.0 + i_m)) + (w_today) * (1.0 + i_h)
+                eq *= intra_factor
+
+                equity_curve.append(eq); daily_index.append(d)
+                prev_w = w_today
+                prev_asset = curr_asset
+                continue
+
+            # GAP leg: use yesterday's asset and yesterday's weight/hedge
+            g_m = float(gap_map[curr_asset].get(d, 0.0))
+            if USE_HEDGE_OVERLAY and (prev_asset in HEDGE_APPLIES_TO) and (prev_w > 0.0):
+                gap_h, _ = _get_gap_intra_for_asset(prev_asset)
+                g_h = float(gap_h.get(d, 0.0))
+                w_gap = prev_w
+            else:
+                g_h = 0.0
+                w_gap = 0.0
+            gap_factor = (1.0 - w_gap) * (1.0 + g_m) + (w_gap) * (1.0 + g_h)
+            eq *= gap_factor
+
+            # Swap main asset at open if needed
+            if next_asset != curr_asset:
+                curr_asset = next_asset
+
+            # Today's hedge weight (decided prior close), capped; slippage if changed vs w_gap
+            w_today = float(hw_all.shift(1).get(d, 0.0)) if (USE_HEDGE_OVERLAY and curr_asset in HEDGE_APPLIES_TO) else 0.0
+            w_today = cap_w_for_asset(w_today, curr_asset)
+            if USE_HEDGE_OVERLAY and HEDGE_SLIPPAGE_ON_ADJUST and not np.isclose(w_today, w_gap, atol=1e-12):
+                eq *= (1.0 - trade_cost(d, is_hedge_adjust=True))
+
+            # INTRA (weighted, drag on main portion)
+            i_m = float(intra_map[curr_asset].get(d, 0.0))
+            drag = proxy_drag(curr_asset, d)
+            if USE_HEDGE_OVERLAY and (curr_asset in HEDGE_APPLIES_TO) and (w_today > 0.0):
+                _, intra_h = _get_gap_intra_for_asset(curr_asset)
+                i_h = float(intra_h.get(d, 0.0))
+            else:
+                i_h = 0.0
+            intra_factor = (1.0 - w_today) * (drag * (1.0 + i_m)) + (w_today) * (1.0 + i_h)
+            eq *= intra_factor
+
+            equity_curve.append(eq); daily_index.append(d)
+            prev_w = w_today
+            prev_asset = curr_asset
+
+        return {"equity_curve": pd.Series(equity_curve, index=pd.DatetimeIndex(daily_index))}
 
     # REAL branch (taxes)
-    eq_pre = START_CAPITAL
+    eq_pre   = START_CAPITAL
     eq_after = START_CAPITAL
     equity_curve = []
     daily_index = []
@@ -1609,8 +1821,7 @@ def sim_strategy(run_idx, paper=False):
 
     realized_ST = defaultdict(float)
     realized_LT = defaultdict(float)
-    carry_ST = 0.0
-    carry_LT = 0.0
+    carry_ST = 0.0; carry_LT = 0.0
     div_tax_by_year = defaultdict(float)
 
     eq_pre_prev_close = None
@@ -1623,166 +1834,121 @@ def sim_strategy(run_idx, paper=False):
 
         if curr_asset is None:
             curr_asset = next_asset
+            # Main trade cost to enter
             c = trade_cost(d)
-            eq_pre *= 1.0 - c
-            eq_after *= 1.0 - c
+            eq_pre   *= (1.0 - c)
+            eq_after *= (1.0 - c)
             entry_date = d
             entry_eq_pre_after_buy = eq_pre
             cum_div_leg_pre = 0.0
 
-            # Hedge slippage at open if entering weight
-            w_today = (
-                float(hw_all.shift(1).get(d, 0.0))
-                if (
-                    USE_HEDGE_OVERLAY
-                    and curr_asset in HEDGE_APPLIES_TO
-                )
-                else 0.0
-            )
+            # Hedge weight (decided prior close), cap, slippage if entering
+            w_today = float(hw_all.shift(1).get(d, 0.0)) if (USE_HEDGE_OVERLAY and curr_asset in HEDGE_APPLIES_TO) else 0.0
             w_today = cap_w_for_asset(w_today, curr_asset)
-            if (
-                USE_HEDGE_OVERLAY
-                and HEDGE_SLIPPAGE_ON_ADJUST
-                and not np.isclose(w_today, prev_w, atol=1e-12)
-            ):
+            if USE_HEDGE_OVERLAY and HEDGE_SLIPPAGE_ON_ADJUST and not np.isclose(w_today, prev_w, atol=1e-12):
                 c = trade_cost(d, is_hedge_adjust=True)
-                eq_pre *= 1.0 - c
-                eq_after *= 1.0 - c
+                eq_pre   *= (1.0 - c)
+                eq_after *= (1.0 - c)
 
-            # INTRA: apply main drag on main portion only
-            drag = proxy_drag(curr_asset, d)
+            # INTRA weighted, drag on main portion
             i_m = float(intra_map[curr_asset].get(d, 0.0))
-            i_h = (
-                float(intra_SQQQ.get(d, 0.0))
-                if USE_HEDGE_OVERLAY
-                else 0.0
-            )
-            intra_factor = (1.0 - w_today) * (drag * (1.0 + i_m)) + (
-                w_today
-            ) * (1.0 + i_h)
-            eq_pre *= intra_factor
+            drag = proxy_drag(curr_asset, d)
+            if USE_HEDGE_OVERLAY and (curr_asset in HEDGE_APPLIES_TO) and (w_today > 0.0):
+                _, intra_h = _get_gap_intra_for_asset(curr_asset)
+                i_h = float(intra_h.get(d, 0.0))
+            else:
+                i_h = 0.0
+            intra_factor = (1.0 - w_today) * (drag * (1.0 + i_m)) + (w_today) * (1.0 + i_h)
+            eq_pre   *= intra_factor
             eq_after *= intra_factor
 
-            equity_curve.append(eq_after)
-            daily_index.append(d)
+            equity_curve.append(eq_after); daily_index.append(d)
             eq_pre_prev_close = eq_pre
             prev_d = d
             prev_w = w_today
             prev_asset = curr_asset
             continue
 
-        # Dividends (main asset only; approximation even if hedged)
-        div_amt = float(
-            div_series.get(
-                curr_asset, pd.Series(0.0, index=run_idx)
-            ).loc[d]
-        )
+        # Dividends (main asset only)
+        div_amt = float(div_series.get(curr_asset, pd.Series(0.0, index=run_idx)).loc[d])
         if div_amt != 0.0 and prev_d is not None:
             prev_close_raw = raw_close[curr_asset].loc[prev_d]
-            if (
-                pd.notna(prev_close_raw)
-                and prev_close_raw != 0.0
-                and eq_pre_prev_close is not None
-            ):
-                div_cash = float(eq_pre_prev_close) * (
-                    div_amt / float(prev_close_raw)
-                )
-                div_tax = DIV_TAX_RATE * div_cash
+            if pd.notna(prev_close_raw) and prev_close_raw != 0.0 and eq_pre_prev_close is not None:
+                div_cash = float(eq_pre_prev_close) * (div_amt / float(prev_close_raw))
+                div_tax  = DIV_TAX_RATE * div_cash
                 eq_after -= div_tax
                 div_tax_by_year[y] += div_tax
                 cum_div_leg_pre += div_cash
 
-        # GAP: weighted by yesterday's weight if prior asset qualified
+        # GAP weighted using yesterday's weight and yesterday's asset-matched hedge
         g_m = float(gap_map[curr_asset].get(d, 0.0))
-        g_h = (
-            float(gap_SQQQ.get(d, 0.0)) if USE_HEDGE_OVERLAY else 0.0
-        )
-        w_gap = (
-            prev_w
-            if (
-                USE_HEDGE_OVERLAY and (prev_asset in HEDGE_APPLIES_TO)
-            )
-            else 0.0
-        )
-        gap_factor = (1.0 - w_gap) * (1.0 + g_m) + (w_gap) * (
-            1.0 + g_h
-        )
-        eq_pre *= gap_factor
+        if USE_HEDGE_OVERLAY and (prev_asset in HEDGE_APPLIES_TO) and (prev_w > 0.0):
+            gap_h, _ = _get_gap_intra_for_asset(prev_asset)
+            g_h = float(gap_h.get(d, 0.0))
+            w_gap = prev_w
+        else:
+            g_h = 0.0
+            w_gap = 0.0
+        gap_factor = (1.0 - w_gap) * (1.0 + g_m) + (w_gap) * (1.0 + g_h)
+        eq_pre   *= gap_factor
         eq_after *= gap_factor
 
         # Swap main asset at open
         if next_asset != curr_asset:
+            # Exit cost
             c = trade_cost(d)
-            eq_pre *= 1.0 - c
-            eq_after *= 1.0 - c
+            eq_pre   *= (1.0 - c)
+            eq_after *= (1.0 - c)
 
+            # Realize gains/losses on the leg
             hold_days = (d - entry_date).days
-            realized_pre = (
-                eq_pre - entry_eq_pre_after_buy - cum_div_leg_pre
-            )
+            realized_pre = eq_pre - entry_eq_pre_after_buy - cum_div_leg_pre
             if hold_days > 365:
                 realized_LT[y] += realized_pre
             else:
                 realized_ST[y] += realized_pre
 
+            # Enter new leg
             curr_asset = next_asset
             c = trade_cost(d)
-            eq_pre *= 1.0 - c
-            eq_after *= 1.0 - c
+            eq_pre   *= (1.0 - c)
+            eq_after *= (1.0 - c)
 
             entry_date = d
             entry_eq_pre_after_buy = eq_pre
             cum_div_leg_pre = 0.0
 
-        # Hedge slippage at open if weight changed
-        w_today = (
-            float(hw_all.shift(1).get(d, 0.0))
-            if (USE_HEDGE_OVERLAY and curr_asset in HEDGE_APPLIES_TO)
-            else 0.0
-        )
+        # Today's hedge weight (prior close), cap, slippage if changed vs w_gap
+        w_today = float(hw_all.shift(1).get(d, 0.0)) if (USE_HEDGE_OVERLAY and curr_asset in HEDGE_APPLIES_TO) else 0.0
         w_today = cap_w_for_asset(w_today, curr_asset)
-        if (
-            USE_HEDGE_OVERLAY
-            and HEDGE_SLIPPAGE_ON_ADJUST
-            and not np.isclose(w_today, w_gap, atol=1e-12)
-        ):
+        if USE_HEDGE_OVERLAY and HEDGE_SLIPPAGE_ON_ADJUST and not np.isclose(w_today, w_gap, atol=1e-12):
             c = trade_cost(d, is_hedge_adjust=True)
-            eq_pre *= 1.0 - c
-            eq_after *= 1.0 - c
+            eq_pre   *= (1.0 - c)
+            eq_after *= (1.0 - c)
 
-        # INTRA: apply drag on main portion only
-        drag = proxy_drag(curr_asset, d)
+        # INTRA weighted, drag on main portion
         i_m = float(intra_map[curr_asset].get(d, 0.0))
-        i_h = (
-            float(intra_SQQQ.get(d, 0.0))
-            if USE_HEDGE_OVERLAY
-            else 0.0
-        )
-        intra_factor = (1.0 - w_today) * (drag * (1.0 + i_m)) + (
-            w_today
-        ) * (1.0 + i_h)
-        eq_pre *= intra_factor
+        drag = proxy_drag(curr_asset, d)
+        if USE_HEDGE_OVERLAY and (curr_asset in HEDGE_APPLIES_TO) and (w_today > 0.0):
+            _, intra_h = _get_gap_intra_for_asset(curr_asset)
+            i_h = float(intra_h.get(d, 0.0))
+        else:
+            i_h = 0.0
+        intra_factor = (1.0 - w_today) * (drag * (1.0 + i_m)) + (w_today) * (1.0 + i_h)
+        eq_pre   *= intra_factor
         eq_after *= intra_factor
 
         # Year-end taxes
-        is_year_end = (i == len(run_idx) - 1) or (
-            run_idx[i + 1].year != y
-        )
+        is_year_end = (i == len(run_idx) - 1) or (run_idx[i + 1].year != y)
         if is_year_end:
             st = realized_ST[y] + carry_ST
             lt = realized_LT[y] + carry_LT
             if st > 0 and lt < 0:
-                off = min(st, -lt)
-                st -= off
-                lt += off
+                off = min(st, -lt); st -= off; lt += off
             elif st < 0 and lt > 0:
-                off = min(lt, -st)
-                lt -= off
-                st += off
+                off = min(lt, -st); lt -= off; st += off
 
-            tax_cap = 0.0
-            new_cf_st = 0.0
-            new_cf_lt = 0.0
+            tax_cap = 0.0; new_cf_st = 0.0; new_cf_lt = 0.0
             if st >= 0 and lt >= 0:
                 tax_cap = ST_RATE * st + LT_RATE * lt
             elif st <= 0 and lt <= 0:
@@ -1790,33 +1956,27 @@ def sim_strategy(run_idx, paper=False):
                 deduct = min(LOSS_DED_CAP, net_loss)
                 tax_cap = -ORD_RATE * deduct
                 rem = net_loss - deduct
-                mag_st = -st
-                mag_lt = -lt
+                mag_st = -st; mag_lt = -lt
                 if (mag_st + mag_lt) > 0:
                     share_st = rem * (mag_st / (mag_st + mag_lt))
                     share_lt = rem - share_st
                     new_cf_st = -share_st
                     new_cf_lt = -share_lt
             else:
-                if st > 0:
-                    tax_cap += ST_RATE * st
-                if lt > 0:
-                    tax_cap += LT_RATE * lt
+                if st > 0: tax_cap += ST_RATE * st
+                if lt > 0: tax_cap += LT_RATE * lt
 
             eq_after -= tax_cap
             carry_ST, carry_LT = new_cf_st, new_cf_lt
             eq_pre = eq_after
 
-        equity_curve.append(eq_after)
-        daily_index.append(d)
+        equity_curve.append(eq_after); daily_index.append(d)
         eq_pre_prev_close = eq_pre
         prev_d = d
         prev_w = w_today
         prev_asset = curr_asset
 
-    equity_curve = pd.Series(
-        equity_curve, index=pd.DatetimeIndex(daily_index)
-    )
+    equity_curve = pd.Series(equity_curve, index=pd.DatetimeIndex(daily_index))
     return {"equity_curve": equity_curve}
 
 
@@ -2306,6 +2466,41 @@ def weekly_signal_dashboard(
 # =========================
 # EXECUTION LOGIC
 # =========================
+
+# ===== OOS comparison (2016–today) =====
+print("\n===== OOS comparison (2016–today) =====")
+OOS = ("2016-01-01", None)
+run_idx_oos = build_run_index(OOS[0], OOS[1])
+
+def print_hedge_stats(run_idx, tag):
+    try:
+        w = hedge_w_series.reindex(run_idx).fillna(0.0)
+        on_pct = 100.0 * float((w > 0).mean())
+        at_half = 100.0 * float((w >= 0.5).mean())
+        flips = int(w.ne(w.shift(1)).sum())
+        print(f"{tag} | Hedge on: {on_pct:.2f}% | At 1/2: {at_half:.2f}% | Flips: {flips}")
+    except Exception as e:
+        print(f"{tag} | Hedge stats error: {e}")
+
+# With overlay
+USE_HEDGE_OVERLAY = True
+res_on_p = sim_strategy(run_idx_oos, paper=True)["equity_curve"]
+res_on_r = sim_strategy(run_idx_oos, paper=False)["equity_curve"]
+m_on_p = metrics_from_curve(res_on_p); m_on_r = metrics_from_curve(res_on_r)
+print_metrics("OOS (Paper, overlay ON)", m_on_p)
+print_metrics("OOS (Real, overlay ON)",  m_on_r)
+print_hedge_stats(run_idx_oos, "Overlay ON")
+
+# Without overlay
+USE_HEDGE_OVERLAY = False
+res_off_p = sim_strategy(run_idx_oos, paper=True)["equity_curve"]
+res_off_r = sim_strategy(run_idx_oos, paper=False)["equity_curve"]
+m_off_p = metrics_from_curve(res_off_p); m_off_r = metrics_from_curve(res_off_r)
+print_metrics("OOS (Paper, overlay OFF)", m_off_p)
+print_metrics("OOS (Real, overlay OFF)",  m_off_r)
+
+# Restore flag for any later runs
+USE_HEDGE_OVERLAY = True
 # After a run (for quick diagnostics)
 try:
     print("Hedge on % of days:", float((hedge_w_series > 0).mean())*100, "%")
@@ -2396,3 +2591,9 @@ else:
         print(
             f"Check SMA warm-up and if WF_TRAIN_YEARS ({WF_TRAIN_YEARS}) is too long for the period."
         )
+        
+print("run_idx_oos len:", len(run_idx_oos))
+res = sim_strategy(run_idx_oos, paper=True)
+print("sim_strategy(paper) is None?", res is None)
+if res:
+    print("curve len:", len(res["equity_curve"]))
