@@ -15,7 +15,7 @@ from typing import Optional, Tuple, Literal
 # CONFIG
 # =========================
 N: int = 252                             # regression window (midline) - standard 252 trading days
-STDEV_PERIOD: int = 20                   # StDev window
+STDEV_PERIOD: int = 12                   # StDev window
 WIDTHS: Tuple[float,float,float,float] = (1.0, 2.0, 3.0, 4.0)  # widthOfChannelK
 DDOF: int = 0                         # stdev ddof
 PRICE_SRC: Literal["hl2","close"] = "hl2"
@@ -25,6 +25,7 @@ EXIT_K: int = 1                          # sell when touch UB1 (default)
 TRADE_ON: Literal["next_open","close"] = "next_open"
 SLIPPAGE_BPS: float = 1.0                # slippage in bps
 INITIAL_EQUITY: float = 100000.0
+SLOPE_LOOKBACK_D: int = 5                # slope lookback in days for diagnostics
 
 # Data source: "yfinance" or "csv"
 USE_CSV: bool = False                    # Set to True to use CSV file instead of yfinance
@@ -36,13 +37,8 @@ HIGHEST_MODE: Literal["to_date","window"] = "window"   # Strict 252-bar sliding 
 # Optional: emulate TOS "loaded bars" anchor. When set, data prior to this date is ignored
 # This affects HighestAll (expanding max) the same way changing the TOS chart's loaded range does.
 CHART_START: Optional[str] = None  # e.g., "2023-01-01"; None means use full history
-
-# Output controls (keep defaults minimal: only one combined file if needed)
-WRITE_STD_LINES: bool = False
-WRITE_YEARLY_EXPORTS: bool = False
-WRITE_PER_STRATEGY_TRADES: bool = False
-WRITE_COMBINED_TRADES: bool = False
-WRITE_BACKTEST_TRADES: bool = False
+RUN_MODE: Literal["normal","compare"] = "compare"
+COMPARE_DATE: str = "2023-09-21"
 
 # =========================
 # Data
@@ -371,59 +367,6 @@ def backtest_rolling_touch_strategy(
     return {"equity_curve": eq_curve, "trades": trades_df}
 
 # =========================
-# Summary + pretty print
-# =========================
-def summarize(eq_curve: pd.Series, trades: pd.DataFrame) -> dict:
-    eq = eq_curve.dropna()
-    if eq.empty:
-        return {"error":"empty equity curve"}
-    rets = eq.pct_change().dropna()
-    n = len(rets)
-    total = eq.iloc[-1] / eq.iloc[0] - 1.0
-    cagr = (eq.iloc[-1] / eq.iloc[0]) ** (252.0 / max(n, 1)) - 1.0 if n > 0 else np.nan
-    vol = rets.std(ddof=DDOF)
-    sharpe = (rets.mean() / vol) * np.sqrt(252.0) if vol > 0 else np.nan
-    mdd = (eq / eq.cummax() - 1.0).min()
-    closed = trades.loc[trades["exit_price"].notna()] if ("exit_price" in trades.columns) else trades.iloc[0:0]
-    win_rate = (closed["ret"] > 0).mean() if not closed.empty else np.nan
-    return {
-        "start_equity": float(eq.iloc[0]),
-        "final_equity": float(eq.iloc[-1]),
-        "total_return": float(total),
-        "CAGR": float(cagr) if pd.notna(cagr) else np.nan,
-        "Sharpe": float(sharpe) if pd.notna(sharpe) else np.nan,
-        "MaxDD": float(mdd),
-        "trades": int(len(closed)),
-        "win_rate": float(win_rate) if pd.notna(win_rate) else np.nan
-    }
-
-def print_all_trades(trades: pd.DataFrame):
-    if trades is None or trades.empty:
-        print("\nNo trades to display.")
-        return
-    t = trades.copy()
-    # Compute duration days where exit_date exists
-    if "entry_date" in t and "exit_date" in t:
-        try:
-            t["duration_days"] = (pd.to_datetime(t["exit_date"]) - pd.to_datetime(t["entry_date"]))\
-                .dt.days
-        except Exception:
-            pass
-    # Order columns
-    preferred_cols = [
-        "entry_date","exit_date","entry_price","exit_price","pnl","ret",
-        "duration_days","entry_reason","exit_reason",
-        "band_k_entry","band_k_exit","prev_lb","prev_ub"
-    ]
-    cols = [c for c in preferred_cols if c in t.columns] + [c for c in t.columns if c not in preferred_cols]
-    t = t[cols]
-    print("\n=== ALL TRADES ===")
-    try:
-        print(t.to_string(index=False))
-    except Exception:
-        print(t.head(50).to_string(index=False))
-
-# =========================
 # Diagnostics: per-day STD lines (strict 252-bar window)
 # =========================
 def compute_std_lines_strict(df: pd.DataFrame, n: int = N, stdev_len: int = STDEV_PERIOD,
@@ -449,6 +392,8 @@ def compute_std_lines_strict(df: pd.DataFrame, n: int = N, stdev_len: int = STDE
     for k in (1,2,3,4):
         out[f"UB{k}"] = mid + k * sd_with
         out[f"LB{k}"] = mid - k * sd_with
+    # slope
+    out["mid_slope"] = out["mid"] - out["mid"].shift(SLOPE_LOOKBACK_D)
     return out
 
 # =========================
@@ -550,8 +495,9 @@ def build_touch_revert_trades(std_df: pd.DataFrame,
                     exit_reason = f"revert_to_{ub_col}"
                     break
             else:
-                # long: sell when Close >= UB1
-                if float(d["close"].iloc[k]) >= float(d["UB1"].iloc[k]):
+                # long: sell when Close >= exit_to (UB1 or UB2)
+                ub_col = "UB1" if exit_to == "UB1" else "UB2"
+                if float(d["close"].iloc[k]) >= float(d[ub_col].iloc[k]):
                     if k + 1 < len(d):
                         exit_date = idx[k+1]
                         op2 = float(d["open"].iloc[k+1])
@@ -560,7 +506,7 @@ def build_touch_revert_trades(std_df: pd.DataFrame,
                         exit_date = idx[k]
                         cl2 = float(d["close"].iloc[k])
                         exit_price = cl2 * (1.0 - bps)
-                    exit_reason = "reach_ub1"
+                    exit_reason = f"reach_{ub_col}"
                     break
 
         # If never found, force exit on last bar open/close accordingly
@@ -574,6 +520,10 @@ def build_touch_revert_trades(std_df: pd.DataFrame,
                 exit_price = float(d["close"].iloc[last_i]) * (1.0 - bps)
                 exit_reason = "force_exit"
 
+        # capture mid and slope at entry (j)
+        mid_entry = float(d["mid"].iloc[j]) if pd.notna(d["mid"].iloc[j]) else float("nan")
+        slope_entry = float(d["mid_slope"].iloc[j]) if pd.notna(d["mid_slope"].iloc[j]) else float("nan")
+
         ret = (entry_price / exit_price - 1.0) if side == "short" else (exit_price / entry_price - 1.0)
         pnl = ret  # 1 unit
         trades.append({
@@ -586,22 +536,13 @@ def build_touch_revert_trades(std_df: pd.DataFrame,
             "pnl": pnl,
             "entry_band_k": entry_band_k,
             "exit_to": exit_to,
-            "duration_days": (pd.to_datetime(exit_date) - pd.to_datetime(entry_date)).days
+            "duration_days": (pd.to_datetime(exit_date) - pd.to_datetime(entry_date)).days,
+            "mid_entry": mid_entry,
+            "mid_slope_entry": slope_entry,
         })
 
     return pd.DataFrame(trades)
 
-def _fmt_money(x, nd=2):
-    if pd.isna(x): return "—"
-    return f"${x:,.{nd}f}"
-
-def _fmt_pct(x, nd=2):
-    if pd.isna(x): return "—"
-    return f"{100*x:.{nd}f}%"
-
-def _fmt_num(x, nd=2):
-    if pd.isna(x): return "—"
-    return f"{x:,.{nd}f}"
 def compare_modes_on_date(df: pd.DataFrame,
                           date: str,
                           symbol: str = "SPY",
@@ -688,232 +629,63 @@ def compare_modes_on_date(df: pd.DataFrame,
     od_touch   = low_prev <= float(ch_todate_prev['LowerBand2'])
     print(f"Touch LB2 on D-1? strict-rolling={roll_touch} | to_date={od_touch}")
 
-# Add this debug function to your code
-def debug_sd_calculation(df, target_date, n=252, stdev_period=20):
-    """Debug the exact SD calculation for a specific date"""
-    target_idx = df.index.get_loc(pd.Timestamp(target_date))
-    
-    # Get the rolling window for that date
-    start_idx = target_idx - n + 1
-    window_data = df.iloc[start_idx:target_idx+1]
-    window_price = (window_data["high"] + window_data["low"]) / 2.0
-    
-    print(f"\n=== DEBUG SD CALCULATION for {target_date} ===")
-    print(f"Window: {window_data.index[0]} to {window_data.index[-1]}")
-    print(f"Window size: {len(window_price)} bars")
-    
-    # Calculate rolling StDev
-    rolling_stdev = window_price.rolling(stdev_period).std(ddof=DDOF)  # DDOF=0 for ThinkScript parity
-    
-    print(f"StDev period: {stdev_period}")
-    print(f"Rolling StDev range: {rolling_stdev.min():.4f} to {rolling_stdev.max():.4f}")
-    print(f"Current StDev: {rolling_stdev.iloc[-1]:.4f}")
-    print(f"HighestAll StDev: {rolling_stdev.max():.4f}")
-    print(f"SD with width: {rolling_stdev.max() * 1.0:.4f}")
-    
-    # Show the actual values around the highest StDev period
-    max_stdev_idx = rolling_stdev.idxmax()
-    max_stdev_value = rolling_stdev.max()
-    max_stdev_pos = rolling_stdev.index.get_loc(max_stdev_idx)
-    
-    print(f"Highest StDev occurred on: {max_stdev_idx}")
-    print(f"Highest StDev value: {max_stdev_value:.4f}")
-    
-    # Show price data around that period
-    if max_stdev_pos >= 10 and max_stdev_pos < len(window_price) - 10:
-        around_data = window_price.iloc[max_stdev_pos-5:max_stdev_pos+6]
-        print(f"Prices around highest StDev period:")
-        for date, price in around_data.items():
-            print(f"  {date}: {price:.2f}")
-    
-    return rolling_stdev.max()
-
-def print_summary(stats: dict):
-    print("\n===== Performance Summary =====")
-    print(f"Start equity : {_fmt_money(stats.get('start_equity', np.nan))}")
-    print(f"Final equity : {_fmt_money(stats.get('final_equity', np.nan))}")
-    print(f"Total return : {_fmt_pct(stats.get('total_return', np.nan))}")
-    print(f"CAGR         : {_fmt_pct(stats.get('CAGR', np.nan))}")
-    print(f"Sharpe       : {_fmt_num(stats.get('Sharpe', np.nan), 2)}")
-    print(f"Max drawdown : {_fmt_pct(stats.get('MaxDD', np.nan))}")
-    print(f"Closed trades: {stats.get('trades', 0)}")
-    print(f"Hit ratio    : {_fmt_pct(stats.get('win_rate', np.nan))}")
-
-
-import pandas as pd
-import numpy as np
-
-def stdev20_series(price: pd.Series, ddof: int = 0) -> pd.Series:
-    return price.rolling(20, min_periods=20).std(ddof=ddof).dropna()
-
-def audit_window(price: pd.Series, end_date: str, n: int = 252, ddof: int = 0, label: str = ""):
-    d = pd.Timestamp(end_date)
-    if d not in price.index:
-        d = price.index[price.index.searchsorted(d, "right") - 1]
-    i = price.index.get_loc(d)
-    if i < n - 1:
-        raise ValueError("Not enough bars to get a 252-bar window ending at " + str(d.date()))
-    win = price.iloc[i - n + 1 : i + 1]  # exactly 252 bars
-    rsd = stdev20_series(win, ddof=ddof)  # length = 252-20+1 = 233
-    mx = float(rsd.max())
-    mx_dt = rsd.idxmax()
-    cur = float(rsd.iloc[-1])
-
-    # Pull the exact 20 HL2 values that created the max σ
-    j = win.index.get_loc(mx_dt)
-    win20 = win.iloc[j - 19 : j + 1]
-
-    print(f"\n=== AUDIT ({label}) window end={d.date()} ===")
-    print(f"Bars: {win.index[0].date()} → {win.index[-1].date()} (n={len(win)})")
-    print(f"StDev(20, ddof={ddof}) current={cur:.4f} max={mx:.4f} at {mx_dt.date()}")
-    print("HL2 values for the max-σ 20-bar window:")
-    print(win20.to_string(float_format="{:.2f}".format))
-
-
-    # quick range sanity: σ cannot exceed range; if it’s big, the HL2 spread is big
-    r = float(win20.max() - win20.min())
-    print(f"Range in that 20-bar window: {r:.4f}")
-    
-# Add this to your main function after the data is loaded:
+# =========================
+# MAIN
+# =========================
 if __name__ == "__main__":
     SYMBOL = "SPY"
     START  = CHART_START or "2015-09-01"
-    END    = "2020-10-01"  # limit backtest to Sep 2015 - Sep 2020
-    print(f"=== CONFIGURATION ===")
-    print(f"DDOF: {DDOF}")
-    print(f"N (window): {N}")
-    print(f"STDEV_PERIOD: {STDEV_PERIOD}")
-    print(f"HighestAll Mode: {HIGHEST_MODE} {'(TOS HighestAll - expanding max)' if HIGHEST_MODE == 'to_date' else '(Strict rolling window)'}")
-    print(f"PRICE_SRC: {PRICE_SRC}")
-    print(f"BAND_K: {BAND_K}")
-    print()
+    END    = "2020-10-01"
 
     # Load data from CSV or yfinance
     if USE_CSV:
-        print(f"Loading data from CSV: {CSV_PATH}")
         df = load_tos_csv(CSV_PATH)
     else:
-        print(f"Downloading data from yfinance: {SYMBOL}")
         df = fetch_ohlc(SYMBOL, START, END, auto_adjust=False)
     
-    # Create price series for audit (same as used in backtest)
-    price_series = make_price(df, source=PRICE_SRC)
-    
-    print(f"Data range: {df.index[0].date()} → {df.index[-1].date()} | bars={len(df):,}")
+    # Quick compare-only mode: compute channels on COMPARE_DATE with to_date HighestAll using 2023-only range
+    if RUN_MODE == "compare":
+        df23 = fetch_ohlc(SYMBOL, "2022-09-01", "2023-10-01", auto_adjust=False)
+        px23 = ((df23["high"] + df23["low"]) / 2.0)
+        ch_full = build_mobius_channels_backtest(
+            px23,
+            n=N,
+            widthOfChannel1=WIDTHS[0], widthOfChannel2=WIDTHS[1], widthOfChannel3=WIDTHS[2], widthOfChannel4=WIDTHS[3],
+            stdev_period=STDEV_PERIOD, ddof=DDOF,
+            highest_mode="to_date", highest_window=None
+        )
+        d = pd.Timestamp(COMPARE_DATE)
+        if d not in ch_full.index:
+            d = ch_full.index[ch_full.index.searchsorted(d, "right")-1]
+        row = ch_full.loc[d]
+        mid = float(row["Midline"])
+        ub1 = float(row["UpperBand1"]); ub2 = float(row["UpperBand2"]); ub3 = float(row["UpperBand3"]); ub4 = float(row["UpperBand4"])
+        lb1 = float(row["LowerBand1"]); lb2 = float(row["LowerBand2"]); lb3 = float(row["LowerBand3"]); lb4 = float(row["LowerBand4"])
+        sd_with = ub1 - mid
+        cl = float(px23.loc[d])
+        print(f"Date: {d.date()}")
+        print(f"HL2: {cl:.2f}")
+        print(f"Midline: {mid:.2f}")
+        print(f"SD (with width): {sd_with:.2f}")
+        print(f"UB1: {ub1:.2f} | UB2: {ub2:.2f} | UB3: {ub3:.2f} | UB4: {ub4:.2f}")
+        print(f"LB1: {lb1:.2f} | LB2: {lb2:.2f} | LB3: {lb3:.2f} | LB4: {lb4:.2f}")
+        raise SystemExit(0)
 
-    # AUDIT SPECIFIC DATES
-    print("\n" + "="*60)
-    print("AUDIT WINDOW ANALYSIS")
-    print("="*60)
-    
-    # Audit specific dates you're interested in (with full yfinance data)
-    audit_dates = ["2020-03-23", "2022-10-13", "2023-09-21"]  # Key volatile periods
-    
-    for audit_date in audit_dates:
-        try:
-            audit_window(
-                price=price_series,
-                end_date=audit_date,
-                n=N,  # 252
-                ddof=DDOF,  # 0
-                label=f"TOS CSV - {audit_date}"
-            )
-        except Exception as e:
-            print(f"Could not audit {audit_date}: {e}")
-    
-    # Then continue with your other analyses...
-    print("\n" + "="*60)
-    print("COMPARISON MODE ANALYSIS") 
-    print("="*60)
-    
-    # Test dates with full historical data
-    test_dates = ["2023-09-21", "2023-12-29"]
-    for test_date in test_dates:
-        try:
-            compare_modes_on_date(
-                df=df,
-                date=test_date,
-                symbol=SYMBOL if not USE_CSV else "CSV",
-                n=N,
-                stdev_period=STDEV_PERIOD,
-                widths=WIDTHS,
-                price_src=PRICE_SRC
-            )
-        except Exception as e:
-            print(f"Could not compare modes for {test_date}: {e}")
-
-    # Then continue with your backtest (only if we have enough bars)
-    if len(df) >= N:
-        print("\n" + "="*60)
-        print("BACKTEST RESULTS")
-        print("="*60)
-        
-        try:
-            res = backtest_rolling_touch_strategy(
-                df,
-                n=N,
-                stdev_period=STDEV_PERIOD,
-                widths=WIDTHS,
-                k=BAND_K,
-                k_entry=ENTRY_K,
-                k_exit=EXIT_K,
-                price_src=PRICE_SRC,
-                trade_on=TRADE_ON,
-                slippage_bps=SLIPPAGE_BPS,
-                initial_equity=INITIAL_EQUITY,
-                force_exit_on_last=True,
-                highest_mode=HIGHEST_MODE
-            )
-            
-            stats = summarize(res["equity_curve"], res["trades"])
-            print_summary(stats)
-            
-            # Show first few trades
-            if not res["trades"].empty:
-                print("\n=== First 5 Trades ===")
-                print(res["trades"].head(5).to_string())
-                # Print and (optionally) export all trades
-                print_all_trades(res["trades"])
-                if WRITE_BACKTEST_TRADES:
-                    trades_csv = f"trades_{df.index[0].date()}_{df.index[-1].date()}.csv"
-                    res["trades"].to_csv(trades_csv, index=False)
-                    print(f"\nWrote trades CSV: {trades_csv}")
-        except Exception as e:
-            print(f"Backtest failed: {e}")
-    else:
-        print(f"\nSkipping backtest - need at least {N} bars, only have {len(df)}")
-
-    # Export per-day STD lines for TOS comparison (strict 252-bar window)
-    print("\n" + "="*60)
-    print("EXPORT: STRICT 252-BAR STD LINES")
-    print("="*60)
-    std_df = compute_std_lines_strict(df, n=N, stdev_len=STDEV_PERIOD, price_src=PRICE_SRC, ddof=DDOF)
-    std_df = std_df.dropna()  # keep only fully-defined rows
-    if WRITE_STD_LINES:
-        csv_path = f"std_lines_{df.index[0].date()}_{df.index[-1].date()}.csv"
-        std_df.to_csv(csv_path, float_format="%.6f")
-        print(f"Wrote per-day STD lines to: {csv_path}")
     # Touch/revert analysis
-    try:
-        touch_stats = analyze_band_touches(std_df)
-        print("\nTOUCH/REVERT STATS (strict 252):")
-        for k, v in touch_stats.items():
-            print(f"  {k}: {v}")
-    except Exception as e:
-        print(f"Touch/revert analysis failed: {e}")
+    std_df = compute_std_lines_strict(df, n=N, stdev_len=STDEV_PERIOD, price_src=PRICE_SRC, ddof=DDOF)
+    std_df = std_df.dropna()
+    
+    touch_stats = analyze_band_touches(std_df)
+    print("\nTOUCH/REVERT STATS:")
+    for k, v in touch_stats.items():
+        print(f"  {k}: {v}")
 
-    # Build short and long touch→revert trade logs
-    print("\n" + "="*60)
-    print("TOUCH→REVERT TRADE LOGS (strict 252, next-open fills)")
-    print("="*60)
+    # Touch→revert trades
     short_ub3 = build_touch_revert_trades(std_df, side="short", entry_band_k=3, exit_to="UB1")
     short_ub2 = build_touch_revert_trades(std_df, side="short", entry_band_k=2)
     long_lb1  = build_touch_revert_trades(std_df, side="long",  entry_band_k=1)
     long_lb2  = build_touch_revert_trades(std_df, side="long",  entry_band_k=2)
     long_lb3  = build_touch_revert_trades(std_df, side="long",  entry_band_k=3)
-
-    # Also compute SHORT UB3→UB2 as requested
-    short_ub3_to_ub2 = build_touch_revert_trades(std_df, side="short", entry_band_k=3, exit_to="UB2")
 
     def _summ(name, df):
         if df is None or df.empty:
@@ -922,58 +694,7 @@ if __name__ == "__main__":
         print(f"{name}: trades={len(df)} | hit={int((df['ret']>0).sum())}/{len(df)} | avg_ret={df['ret'].mean():.4f} | avg_days={df['duration_days'].mean():.1f}")
 
     _summ("SHORT UB3→UB1", short_ub3)
-    _summ("SHORT UB3→UB2", short_ub3_to_ub2)
     _summ("SHORT UB2→UB1", short_ub2)
     _summ("LONG  LB1→UB1", long_lb1)
     _summ("LONG  LB2→UB1", long_lb2)
     _summ("LONG  LB3→UB1", long_lb3)
-
-    # Export ONLY the requested strategy file
-    short_ub3_to_ub2.to_csv("trades_short_UB3_to_UB2.csv", index=False)
-    print("Wrote: trades_short_UB3_to_UB2.csv")
-
-    # Combined single table
-    combined_parts = []
-    for df, name in [
-        (short_ub3, "short_UB3_to_UB1"),
-        (short_ub2, "short_UB2_to_UB1"),
-        (long_lb1,  "long_LB1_to_UB1"),
-        (long_lb2,  "long_LB2_to_UB1"),
-        (long_lb3,  "long_LB3_to_UB1"),
-    ]:
-        if df is not None and not df.empty:
-            x = df.copy()
-            x["strategy"] = name
-            combined_parts.append(x)
-    combined = pd.concat(combined_parts, ignore_index=True) if combined_parts else pd.DataFrame()
-    if not combined.empty and WRITE_COMBINED_TRADES:
-        print("\n=== ALL TOUCH→REVERT TRADES (combined) ===")
-        try:
-            print(combined.to_string(index=False))
-        except Exception:
-            print(combined.head(1000).to_string(index=False))
-        combined.to_csv("trades_touch_revert_all.csv", index=False)
-        print("\nWrote combined CSV: trades_touch_revert_all.csv")
-    try:
-        print("\nHead:")
-        print(std_df.head(5).to_string())
-        print("\nTail:")
-        print(std_df.tail(5).to_string())
-    except Exception:
-        pass
-
-    # Yearly exports (strict 252-bar window): 2019, 2020, 2021
-    if WRITE_YEARLY_EXPORTS:
-        print("\n" + "="*60)
-        print("YEARLY EXPORTS (strict 252-bar window)")
-        print("="*60)
-        for ys in ["2019-01-01", "2020-01-01", "2021-01-01"]:
-            ye = f"{int(ys[:4]) + 1}-01-01"
-            print(f"Downloading {SYMBOL} for {ys} → {ye}")
-            df_year = fetch_ohlc(SYMBOL, ys, ye, auto_adjust=False)
-            std_year = compute_std_lines_strict(df_year, n=N, stdev_len=STDEV_PERIOD, price_src=PRICE_SRC, ddof=DDOF).dropna()
-            out_path = f"std_lines_{ys}_{ye}.csv"
-            std_year.to_csv(out_path, float_format="%.6f")
-            print(f"  wrote: {out_path} rows={len(std_year)} first={std_year.index[0].date()} last={std_year.index[-1].date()}")
-
-  
