@@ -37,7 +37,7 @@ HIGHEST_MODE: Literal["to_date","window"] = "window"   # Strict 252-bar sliding 
 # Optional: emulate TOS "loaded bars" anchor. When set, data prior to this date is ignored
 # This affects HighestAll (expanding max) the same way changing the TOS chart's loaded range does.
 CHART_START: Optional[str] = None  # e.g., "2023-01-01"; None means use full history
-RUN_MODE: Literal["normal","compare"] = "compare"
+RUN_MODE: Literal["normal","compare"] = "normal"
 COMPARE_DATE: str = "2023-09-21"
 
 # =========================
@@ -539,6 +539,117 @@ def build_touch_revert_trades(std_df: pd.DataFrame,
             "duration_days": (pd.to_datetime(exit_date) - pd.to_datetime(entry_date)).days,
             "mid_entry": mid_entry,
             "mid_slope_entry": slope_entry,
+        })
+
+    return pd.DataFrame(trades)
+
+# =========================
+# Pyramiding backtest: overlapping trades allowed
+# =========================
+def build_pyramiding_trades(std_df: pd.DataFrame,
+                            side: str,
+                            entry_band_k: int,
+                            exit_target: str,
+                            slippage_bps: float = SLIPPAGE_BPS) -> pd.DataFrame:
+    """
+    Build trades with pyramiding (overlapping trades allowed).
+    Each entry signal creates a new trade, regardless of existing positions.
+    
+    Entry: 
+      - Long: Low <= LB{entry_band_k} on day i -> enter at open of day i+1
+      - Short: High >= UB{entry_band_k} on day i -> enter at open of day i+1
+    
+    Exit:
+      - Long: Close >= exit_target on day j -> exit at open of day j+1
+      - Short: Close <= exit_target on day j -> exit at open of day j+1
+    """
+    d = std_df.dropna(subset=["open","high","low","close","mid","UB1","UB2","UB3","UB4","LB1","LB2","LB3","LB4"]).copy()
+    idx = d.index.to_list()
+    trades = []
+    bps = slippage_bps / 10000.0
+
+    for i in range(len(d)):
+        if i >= len(d) - 1:
+            break  # need next-day open to fill
+
+        # Check entry signal on day i
+        if side == "short":
+            entry_band = d[f"UB{entry_band_k}"]
+            entry_signal = (d["high"].iloc[i] >= float(entry_band.iloc[i]))
+        else:
+            entry_band = d[f"LB{entry_band_k}"]
+            entry_signal = (d["low"].iloc[i] <= float(entry_band.iloc[i]))
+
+        if not entry_signal:
+            continue
+
+        # Entry at next day's open (day i+1)
+        j = i + 1
+        entry_date = idx[j]
+        op = float(d["open"].iloc[j])
+        if side == "short":
+            entry_price = op * (1.0 - bps)  # sell to open
+        else:
+            entry_price = op * (1.0 + bps)  # buy to open
+
+        # Search for exit condition from day j onward
+        exit_date = None
+        exit_price = None
+        exit_reason = None
+        
+        for k in range(j, len(d)):
+            exit_level = float(d[exit_target].iloc[k])
+            
+            if side == "short":
+                # Short exit: Close <= exit_target (price drops to band)
+                # Exit at the band price itself (best approximation with daily data)
+                if float(d["close"].iloc[k]) <= exit_level:
+                    exit_date = idx[k]
+                    # Use the band level as fill price (assuming we hit it intraday)
+                    exit_price = exit_level * (1.0 + bps)  # buy to close at band
+                    exit_reason = f"reach_{exit_target}"
+                    break
+            else:
+                # Long exit: Close >= exit_target (price rises to band)
+                # Exit at the band price itself (best approximation with daily data)
+                if float(d["close"].iloc[k]) >= exit_level:
+                    exit_date = idx[k]
+                    # Use the band level as fill price (assuming we hit it intraday)
+                    exit_price = exit_level * (1.0 - bps)  # sell to close at band
+                    exit_reason = f"reach_{exit_target}"
+                    break
+
+        # If never found exit, force exit on last bar
+        if exit_date is None:
+            last_i = len(d) - 1
+            exit_date = idx[last_i]
+            if side == "short":
+                exit_price = float(d["close"].iloc[last_i]) * (1.0 + bps)
+            else:
+                exit_price = float(d["close"].iloc[last_i]) * (1.0 - bps)
+            exit_reason = "force_exit"
+
+        # Capture mid and slope at entry
+        mid_entry = float(d["mid"].iloc[j]) if pd.notna(d["mid"].iloc[j]) else float("nan")
+        slope_entry = float(d["mid_slope"].iloc[j]) if pd.notna(d["mid_slope"].iloc[j]) else float("nan")
+
+        ret = (entry_price / exit_price - 1.0) if side == "short" else (exit_price / entry_price - 1.0)
+        pnl = ret  # 1 unit
+        
+        trades.append({
+            "side": side,
+            "entry_date": entry_date,
+            "entry_price": entry_price,
+            "exit_date": exit_date,
+            "exit_price": exit_price,
+            "ret": ret,
+            "pnl": pnl,
+            "entry_band_k": entry_band_k,
+            "exit_target": exit_target,
+            "duration_days": (pd.to_datetime(exit_date) - pd.to_datetime(entry_date)).days,
+            "mid_entry": mid_entry,
+            "mid_slope_entry": slope_entry,
+            "exit_reason": exit_reason
         })
 
     return pd.DataFrame(trades)
