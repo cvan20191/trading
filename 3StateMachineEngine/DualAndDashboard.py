@@ -797,10 +797,11 @@ ALPHA_MAX           = 1.0    # Cap at 1.0 for downside-only (never scale up)
 ALPHA_UPDATE_THRESH = 0.10   # only update if change exceeds this
 
 # Regime-dependent VT parameters (used when VT_MODE == "regime_dependent")
+# Note: Tested but not used in baseline. Kept for future experimentation.
 VT_TARGET_BY_REGIME = {
     2: 0.40,   # State 2 (3x allowed): higher target for growth
     1: 0.25,   # State 1 (2x allowed): lower target
-    0: None,   # State 0 (risk-off): no VT (or set to 0.15 if you want light VT)
+    0: None,   # State 0 (risk-off): no VT
 }
 VT_ALPHA_MIN_BY_REGIME = {
     2: 0.50,   # State 2: higher floor
@@ -810,13 +811,14 @@ VT_ALPHA_MIN_BY_REGIME = {
 
 # =========================
 # Drawdown-only throttle (Step 3) - Portfolio-level risk control
+# Note: Tested but not used in baseline. Kept for future experimentation.
 # =========================
-USE_DD_THROTTLE_VT   = False  # Enable/disable drawdown throttle
+USE_DD_THROTTLE_VT   = False  # Enable/disable drawdown throttle (portfolio-level)
 DD_THROTTLE_THRESH1  = 0.10   # First threshold (10%)
 DD_THROTTLE_THRESH2  = 0.20   # Second threshold (20%)
 DD_THROTTLE_MULT1    = 1.00   # Multiplier when DD <= thresh1
-DD_THROTTLE_MULT2    = 0.80   # Multiplier when thresh1 < DD <= thresh2 (test also 0.70)
-DD_THROTTLE_MULT3    = 0.60   # Multiplier when DD > thresh2 (test also 0.50)
+DD_THROTTLE_MULT2    = 0.80   # Multiplier when thresh1 < DD <= thresh2
+DD_THROTTLE_MULT3    = 0.60   # Multiplier when DD > thresh2
 DD_THROTTLE_COOLDOWN = True   # Only increase multiplier after recovering half DD
 
 def _build_daily_total_return_series(gap_s: pd.Series, intra_s: pd.Series) -> pd.Series:
@@ -1668,7 +1670,3 @@ else:
         print(f"===== Walk-Forward Validation ({WF_START_DATE} to {WF_END_DATE}) =====")
         print("No data available for this period or configuration.")
         print(f"Check SMA warm-up and if WF_TRAIN_YEARS ({WF_TRAIN_YEARS}) is too long for the period.")
-
-# =========================
-# Volatility-targeted sizing (Sprint 1) - Moved to before sim_strategy
-# =========================
