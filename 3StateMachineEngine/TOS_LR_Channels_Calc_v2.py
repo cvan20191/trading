@@ -375,9 +375,8 @@ def compute_std_lines_strict(df: pd.DataFrame, n: int = N, stdev_len: int = STDE
     px = ((df["high"] + df["low"]) / 2.0) if price_src == "hl2" else df["close"]
     mid = rolling_inertia_mid(px, n=n)
     rsd = px.rolling(stdev_len, min_periods=stdev_len).std(ddof=ddof)
-    # max over the last (n - stdev_len + 1) rsd observations → strict-in-window Highest
-    win = max(1, n - stdev_len + 1)
-    sd_base = rsd.rolling(win, min_periods=win).max()
+    # HighestAll = GLOBAL expanding max (matches TOS HighestAll behavior)
+    sd_base = rsd.expanding(min_periods=stdev_len).max()
     sd_with = sd_base  # width1=1 by definition
     out = pd.DataFrame(index=df.index)
     out["hl2"] = px
@@ -809,3 +808,4 @@ if __name__ == "__main__":
     _summ("LONG  LB1→UB1", long_lb1)
     _summ("LONG  LB2→UB1", long_lb2)
     _summ("LONG  LB3→UB1", long_lb3)
+

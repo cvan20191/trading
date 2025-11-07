@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # dual_day_strategy.py
 # Weekly 3-state engine with dual execution days:
 # - Decide Thursday close -> execute next trading day open (usually Friday)
@@ -18,63 +19,55 @@ except Exception:
 # =========================
 # Config
 # =========================
-DATA_START      = "1950-01-01"
-DATA_END        = None  # None => today
+DATA_START = "2000-01-01"
+DATA_END = None  # None => today
 
 DO_WALK_FORWARD = False
 
-WF_START_DATE     = "1962-01-01"
-WF_END_DATE       = "1979-12-31"
-WF_TRAIN_YEARS    = 2
-WF_TEST_YEARS     = 1
-WF_USE_PAPER      = True
-WF_CHAIN_CAPITAL  = True
+WF_START_DATE = "1962-01-01"
+WF_END_DATE = "1979-12-31"
+WF_TRAIN_YEARS = 2
+WF_TEST_YEARS = 1
+WF_USE_PAPER = True
+WF_CHAIN_CAPITAL = True
 
-IN_SAMPLE         = ("2000-01-01", "2000-01-01")
-OOS_MAIN          = ("1999-01-01", None)
-HOLDOUT           = ("2000-01-01", None)
+IN_SAMPLE = ("2000-01-01", "2000-01-01")
+OOS_MAIN = ("1999-01-01", None)
+HOLDOUT = ("2000-01-01", None)
 
-START_CAPITAL   = 21000.0
+START_CAPITAL = 21000.0
 
 # SMA/Signal params (3-state engine uses ^GSPC by default)
 SIGNAL_SYMBOL = "^GSPC"
 SMA_SLOW = 200
-SMA_MID  = 100
+SMA_MID = 100
 BAND_PCT = 0.005
 
 # 3-state behavior
 ONE_SIDED_2X = True
 ADAPTIVE_UP_WINDOW = True
-MID_UP_WINDOW_WEEKS_BENIGN  = 4
-MID_UP_WINDOW_WEEKS_STRESSED= 6
+MID_UP_WINDOW_WEEKS_BENIGN = 4
+MID_UP_WINDOW_WEEKS_STRESSED = 6
 
 USE_SLOPE_FILTER = True
 SLOPE_LOOKBACK_W = 4
 
 # Additional gates
 USE_DIST_GATE_200 = True
-DELTA_200_PCT     = 0.010
+DELTA_200_PCT = 0.010
 USE_ADAPTIVE_DIST = True
 
-USE_VOL_CAP       = True
-VOL_LOOKBACK_D    = 20
-VOL_TH_3X         = 0.35
-VOL_TH_ROFF       = 0.45
+USE_VOL_CAP = True
+VOL_LOOKBACK_D = 20
+VOL_TH_3X = 0.35
+VOL_TH_ROFF = 0.45
 
-USE_DD_THROTTLE   = True
-DD_LOOKBACK_D     = 252
-DD_TH_2X          = 0.20
-
-# Volatility-targeted sizing (Sprint 1)
-USE_VOL_TARGETING = True
-TARGET_VOL_ANNUAL = 0.30   # sigma* = 30% annualized
-VT_LOOKBACK_D     = 20      # realized vol lookback (trading days)
-ALPHA_MIN         = 0.40    # minimum sizing factor
-ALPHA_MAX         = 1.20    # maximum sizing factor
-ALPHA_UPDATE_THRESH = 0.10  # only update if |alpha_t - alpha_{t-1}| > this
+USE_DD_THROTTLE = True
+DD_LOOKBACK_D = 252
+DD_TH_2X = 0.20
 
 # Risk-off (GLD vs IEF momentum)
-USE_DUAL_RISK_OFF   = False   # GLD only by default
+USE_DUAL_RISK_OFF = False  # GLD only by default
 RISK_OFF_LOOKBACK_D = 63
 
 # Trading frictions
@@ -83,27 +76,27 @@ SLIPPAGE_BPS_STRESS = 15
 STRESS_THRESHOLD = 0.02
 
 # Taxes (only if paper=False)
-ST_RATE       = 0.37
-LT_RATE       = 0.15
-DIV_TAX_RATE  = 0.34
-ORD_RATE      = 0.34
-LOSS_DED_CAP  = 3000.0
+ST_RATE = 0.37
+LT_RATE = 0.15
+DIV_TAX_RATE = 0.34
+ORD_RATE = 0.34
+LOSS_DED_CAP = 3000.0
 
 # Proxy drags
-LEV_ANNUAL_FEE_3X   = 0.0094
-LEV_ANNUAL_FEE_2X   = 0.0095
-GLD_ER_ANNUAL       = 0.0040
-LEV_EXCESS          = 2.0
-LEV_EXCESS_2X       = 1.0
+LEV_ANNUAL_FEE_3X = 0.0094
+LEV_ANNUAL_FEE_2X = 0.0095
+GLD_ER_ANNUAL = 0.0040
+LEV_EXCESS = 2.0
+LEV_EXCESS_2X = 1.0
 FIN_FALLBACK_ANNUAL = 0.03
-APPLY_PROXY_DRAGS   = True
+APPLY_PROXY_DRAGS = True
 
 # Proxy calibration
 CALIBRATE_TQQQ_PROXY = True
-CALIBRATE_GLD_PROXY  = False
+CALIBRATE_GLD_PROXY = False
 CALIBRATE_SPXL_PROXY = True
-CALIBRATE_QLD_PROXY  = True
-CALIBRATE_SSO_PROXY  = True
+CALIBRATE_QLD_PROXY = True
+CALIBRATE_SSO_PROXY = True
 
 # Wash-sale avoidance for Nasdaq legs
 LOCKOUT_DAYS = 30
@@ -113,71 +106,92 @@ USE_LBMA_SPOT = True
 
 # ============ Dashboard lineups (availability fallback only) ============
 # Only used if the original choice has no data that day. Original order/lockout preserved.
-RISK_ON_3X_LINEUP    = ["TQQQ", "SPXL", "UPRO", "UDOW", "TECL", "SOXL", "TNA", "FNGU"]
-RISK_ON_2X_LINEUP    = ["QLD",  "SSO",  "SPUU", "DDM",  "UWM",  "ROM"]
+RISK_ON_3X_LINEUP = ["TQQQ", "SPXL", "UPRO", "UDOW", "TECL", "SOXL", "TNA", "FNGU"]
+RISK_ON_2X_LINEUP = ["QLD", "SSO", "SPUU", "DDM", "UWM", "ROM"]
 RISK_OFF_GOLD_LINEUP = ["GLD", "IAU", "GLDM", "SGOL", "BAR", "AAAU"]
 RISK_OFF_BOND_LINEUP = ["IEF", "VGIT", "GOVT", "SCHR", "IEI", "SHY", "TLH"]
-lineup_syms = set(RISK_ON_3X_LINEUP + RISK_ON_2X_LINEUP + RISK_OFF_GOLD_LINEUP + RISK_OFF_BOND_LINEUP)
+lineup_syms = set(
+    RISK_ON_3X_LINEUP + RISK_ON_2X_LINEUP + RISK_OFF_GOLD_LINEUP + RISK_OFF_BOND_LINEUP
+)
+
 
 # =========================
 # Helpers
 # =========================
 def cagr_from_curve(curve):
-    if len(curve) < 2: return np.nan
+    if len(curve) < 2:
+        return np.nan
     yrs = (curve.index[-1] - curve.index[0]).days / 365.25
-    if yrs <= 0: return np.nan
-    return float((curve.iloc[-1] / curve.iloc[0]) ** (1/yrs) - 1)
+    if yrs <= 0:
+        return np.nan
+    return float((curve.iloc[-1] / curve.iloc[0]) ** (1 / yrs) - 1)
+
 
 def max_drawdown_from_curve(curve):
-    if curve.empty: return np.nan
+    if curve.empty:
+        return np.nan
     running_max = curve.cummax()
-    dd = (curve / running_max - 1.0)
+    dd = curve / running_max - 1.0
     return float(dd.min())
 
+
 def annualized_vol_from_curve(curve):
-    if len(curve) < 2: return np.nan
+    if len(curve) < 2:
+        return np.nan
     rets = curve.pct_change().dropna()
     return float(rets.std() * math.sqrt(252))
 
+
 def sharpe_from_curve(curve, rf=0.0):
     rets = curve.pct_change().dropna()
-    if rets.empty: return np.nan
-    ann_ret = (1 + rets.mean())**252 - 1
+    if rets.empty:
+        return np.nan
+    ann_ret = (1 + rets.mean()) ** 252 - 1
     ann_vol = rets.std() * math.sqrt(252)
     return float((ann_ret - rf) / ann_vol) if ann_vol > 0 else np.nan
 
+
 def sortino_from_curve(curve, rf=0.0):
     rets = curve.pct_change().dropna()
-    if rets.empty: return np.nan
+    if rets.empty:
+        return np.nan
     downside = rets[rets < 0]
     dd = downside.std() * math.sqrt(252)
-    ann_ret = (1 + rets.mean())**252 - 1
+    ann_ret = (1 + rets.mean()) ** 252 - 1
     return float((ann_ret - rf) / dd) if dd > 0 else np.nan
+
 
 def calmar_from_curve(curve):
     cagr = cagr_from_curve(curve)
-    mdd  = max_drawdown_from_curve(curve)
+    mdd = max_drawdown_from_curve(curve)
     return float(cagr / abs(mdd)) if (mdd is not None and mdd < 0) else np.nan
+
 
 def adj_open(open_s, close_s, adj_close_s):
     return open_s * (adj_close_s / close_s)
 
+
 def seg_returns(ao, ac):
-    gap   = (ao / ac.shift(1) - 1.0)
-    intra = (ac / ao - 1.0)
+    gap = ao / ac.shift(1) - 1.0
+    intra = ac / ao - 1.0
     return gap, intra
 
+
 def year_returns_from_curve(curve):
-    if curve.empty: return pd.Series(dtype=float)
+    if curve.empty:
+        return pd.Series(dtype=float)
     y_end = curve.resample("YE").last()
     y_start = y_end.shift(1)
     yr = (y_end / y_start - 1.0).dropna()
     yr.index = yr.index.year
     return yr
 
+
 def fmt_pct(x):
-    if x is None or (isinstance(x, float) and (np.isnan(x) or np.isinf(x))): return "nan"
+    if x is None or (isinstance(x, float) and (np.isnan(x) or np.isinf(x))):
+        return "nan"
     return f"{100.0 * x:.2f}%"
+
 
 def next_trading_day(date_like):
     # Dashboard helper: use actual market index to find next trading day (holiday aware)
@@ -185,26 +199,35 @@ def next_trading_day(date_like):
     pos = idx.searchsorted(d, side="right")
     return idx[pos] if pos < len(idx) else None
 
+
 # =========================
 # Download data
 # =========================
 if DATA_END is None:
     DATA_END = (pd.Timestamp.today() + BDay(1)).date().isoformat()
 
-tickers = sorted(set(
-    [SIGNAL_SYMBOL, "^GSPC", "^NDX", "SPY", "GC=F"] + list(lineup_syms)
-))
+tickers = sorted(
+    set([SIGNAL_SYMBOL, "^GSPC", "^NDX", "SPY", "GC=F"] + list(lineup_syms))
+)
 dl_lookback = max(SMA_SLOW, SMA_MID, DD_LOOKBACK_D, RISK_OFF_LOOKBACK_D) + 10
 dl_start = (pd.to_datetime(DATA_START) - BDay(dl_lookback)).date().isoformat()
-px = yf.download(tickers, start=dl_start, end=DATA_END, auto_adjust=False, progress=False)
+px = yf.download(
+    tickers, start=dl_start, end=DATA_END, auto_adjust=False, progress=False
+)
 
 # Reference series for SMA/logic
-if SIGNAL_SYMBOL not in px["Adj Close"].columns or px["Adj Close"][SIGNAL_SYMBOL].isnull().all():
-    print(f"Warning: SIGNAL_SYMBOL {SIGNAL_SYMBOL} not found or all NaN. Defaulting to ^GSPC.")
+if (
+    SIGNAL_SYMBOL not in px["Adj Close"].columns
+    or px["Adj Close"][SIGNAL_SYMBOL].isnull().all()
+):
+    print(
+        f"Warning: SIGNAL_SYMBOL {SIGNAL_SYMBOL} not found or all NaN. Defaulting to ^GSPC."
+    )
     SIGNAL_SYMBOL = "^GSPC"
 
 ref_ac = px["Adj Close"][SIGNAL_SYMBOL].dropna()
 idx = ref_ac.index
+
 
 # Build adjusted open and adjusted close for symbols
 def get_adj_ohlc(px, sym, idx):
@@ -213,23 +236,29 @@ def get_adj_ohlc(px, sym, idx):
         ac = pd.Series(index=idx, dtype=float)
         cl = pd.Series(index=idx, dtype=float)
         return ao, ac, cl
-    c  = px["Close"][sym].dropna()
-    ao = adj_open(px["Open"][sym].reindex(c.index), c, px["Adj Close"][sym].reindex(c.index))
+    c = px["Close"][sym].dropna()
+    ao = adj_open(
+        px["Open"][sym].reindex(c.index), c, px["Adj Close"][sym].reindex(c.index)
+    )
     ac = px["Adj Close"][sym].reindex(c.index)
     cl = px["Close"][sym].reindex(c.index)
-    ao = ao.reindex(idx); ac = ac.reindex(idx); cl = cl.reindex(idx)
+    ao = ao.reindex(idx)
+    ac = ac.reindex(idx)
+    cl = cl.reindex(idx)
     return ao, ac, cl
 
-ndx_ao, ndx_ac, ndx_cl     = get_adj_ohlc(px, "^NDX", idx)
-tqqq_ao, tqqq_ac, tqqq_cl  = get_adj_ohlc(px, "TQQQ", idx)
-gld_ao,  gld_ac,  gld_cl   = get_adj_ohlc(px, "GLD",  idx)
-gcf_ao,  gcf_ac,  gcf_cl   = get_adj_ohlc(px, "GC=F", idx)
-spy_ao,  spy_ac,  spy_cl   = get_adj_ohlc(px, "SPY",  idx)
-spxl_ao, spxl_ac, spxl_cl  = get_adj_ohlc(px, "SPXL", idx)
-qld_ao,  qld_ac,  qld_cl   = get_adj_ohlc(px, "QLD",  idx)
-sso_ao,  sso_ac,  sso_cl   = get_adj_ohlc(px, "SSO",  idx)
-ief_ao,  ief_ac,  ief_cl   = get_adj_ohlc(px, "IEF",  idx)
+
+ndx_ao, ndx_ac, ndx_cl = get_adj_ohlc(px, "^NDX", idx)
+tqqq_ao, tqqq_ac, tqqq_cl = get_adj_ohlc(px, "TQQQ", idx)
+gld_ao, gld_ac, gld_cl = get_adj_ohlc(px, "GLD", idx)
+gcf_ao, gcf_ac, gcf_cl = get_adj_ohlc(px, "GC=F", idx)
+spy_ao, spy_ac, spy_cl = get_adj_ohlc(px, "SPY", idx)
+spxl_ao, spxl_ac, spxl_cl = get_adj_ohlc(px, "SPXL", idx)
+qld_ao, qld_ac, qld_cl = get_adj_ohlc(px, "QLD", idx)
+sso_ao, sso_ac, sso_cl = get_adj_ohlc(px, "SSO", idx)
+ief_ao, ief_ac, ief_cl = get_adj_ohlc(px, "IEF", idx)
 gspc_ac = px["Adj Close"]["^GSPC"].reindex(idx)
+
 
 # Dividends
 def get_div_series(sym, idx):
@@ -248,31 +277,33 @@ def get_div_series(sym, idx):
     except Exception:
         return pd.Series(0.0, index=idx)
 
+
 div_tqqq = get_div_series("TQQQ", idx)
-div_gld  = get_div_series("GLD",  idx)
+div_gld = get_div_series("GLD", idx)
 div_spxl = get_div_series("SPXL", idx)
-div_qld  = get_div_series("QLD",  idx)
-div_sso  = get_div_series("SSO",  idx)
-div_ief  = get_div_series("IEF",  idx)
+div_qld = get_div_series("QLD", idx)
+div_sso = get_div_series("SSO", idx)
+div_ief = get_div_series("IEF", idx)
+
 
 # =========================
 # Risk-free (daily) for financing; LBMA spot loader
 # =========================
 def load_rf_daily(idx):
     if pdr is None:
-        return pd.Series(FIN_FALLBACK_ANNUAL/252.0, index=idx)
+        return pd.Series(FIN_FALLBACK_ANNUAL / 252.0, index=idx)
     try:
-        dff = pdr.DataReader('DFF', 'fred', idx.min(), idx.max()).squeeze()
+        dff = pdr.DataReader("DFF", "fred", idx.min(), idx.max()).squeeze()
     except Exception:
         dff = None
     try:
-        tb3 = pdr.DataReader('TB3MS', 'fred', idx.min(), idx.max()).squeeze()
-        tb3 = tb3.resample('B').ffill()
+        tb3 = pdr.DataReader("TB3MS", "fred", idx.min(), idx.max()).squeeze()
+        tb3 = tb3.resample("B").ffill()
     except Exception:
         tb3 = None
 
     if dff is None and tb3 is None:
-        return pd.Series(FIN_FALLBACK_ANNUAL/252.0, index=idx)
+        return pd.Series(FIN_FALLBACK_ANNUAL / 252.0, index=idx)
 
     rf = None
     if dff is not None:
@@ -284,20 +315,23 @@ def load_rf_daily(idx):
     rf = rf.ffill().fillna(0.0)
     return rf / 100.0 / 252.0
 
+
 def load_lbma_spot(idx):
     if (not USE_LBMA_SPOT) or (pdr is None):
         return None
     try:
-        s = pdr.DataReader('GOLDPMGBD228NLBM', 'fred', idx.min(), idx.max()).squeeze()
-        s = s.reindex(pd.date_range(s.index.min(), s.index.max(), freq='B')).ffill()
+        s = pdr.DataReader("GOLDPMGBD228NLBM", "fred", idx.min(), idx.max()).squeeze()
+        s = s.reindex(pd.date_range(s.index.min(), s.index.max(), freq="B")).ffill()
         return s.reindex(idx).ffill()
     except Exception:
         return None
 
-rf_daily        = load_rf_daily(idx)
-fee_daily_3x    = LEV_ANNUAL_FEE_3X / 252.0
-fee_daily_2x    = LEV_ANNUAL_FEE_2X / 252.0
-gld_fee_daily   = GLD_ER_ANNUAL     / 252.0
+
+rf_daily = load_rf_daily(idx)
+fee_daily_3x = LEV_ANNUAL_FEE_3X / 252.0
+fee_daily_2x = LEV_ANNUAL_FEE_2X / 252.0
+gld_fee_daily = GLD_ER_ANNUAL / 252.0
+
 
 # =========================
 # Build asset returns with pre-inception proxies
@@ -308,149 +342,178 @@ def build_asset_returns_GLD():
 
     spot = load_lbma_spot(idx)
     if spot is not None and not spot.empty:
-        ao_spot = spot.shift(1); ac_spot = spot
+        ao_spot = spot.shift(1)
+        ac_spot = spot
         proxy_gap, proxy_intra = seg_returns(ao_spot, ac_spot)
     else:
         proxy_gap, proxy_intra = seg_returns(gcf_ao, gcf_ac)
 
     if CALIBRATE_GLD_PROXY and has.any():
-        real_T = ((1 + real_gap) * (1 + real_intra) - 1.0)
-        prox_T = ((1 + proxy_gap) * (1 + proxy_intra) - 1.0)
+        real_T = (1 + real_gap) * (1 + real_intra) - 1.0
+        prox_T = (1 + proxy_gap) * (1 + proxy_intra) - 1.0
         overlap = real_T.dropna().index.intersection(prox_T.dropna().index)
         if len(overlap) >= 200:
             b, a = np.polyfit(prox_T.loc[overlap].values, real_T.loc[overlap].values, 1)
             pre = ~has
-            T_pre = ((1 + proxy_gap.loc[pre]) * (1 + proxy_intra.loc[pre]) - 1.0)
+            T_pre = (1 + proxy_gap.loc[pre]) * (1 + proxy_intra.loc[pre]) - 1.0
             T_adj = a + b * T_pre
-            proxy_intra.loc[pre] = ((1.0 + T_adj) / (1.0 + proxy_gap.loc[pre]) - 1.0)
+            proxy_intra.loc[pre] = (1.0 + T_adj) / (1.0 + proxy_gap.loc[pre]) - 1.0
 
-    gap   = real_gap.where(has, proxy_gap).fillna(0.0)
+    gap = real_gap.where(has, proxy_gap).fillna(0.0)
     intra = real_intra.where(has, proxy_intra).fillna(0.0)
     proxied = ~has
     return gap, intra, proxied
 
+
 def build_asset_returns_TQQQ():
     base_gap, base_intra = seg_returns(ndx_ao, ndx_ac)
     lev = 3.0
-    proxy_gap   = (lev * base_gap).clip(lower=-0.95).fillna(0.0)
-    den         = (1.0 + proxy_gap).replace(-1.0, -0.999999)
-    proxy_daily = ((1 + base_gap).fillna(1.0) * (1 + base_intra).fillna(1.0) - 1.0)
+    proxy_gap = (lev * base_gap).clip(lower=-0.95).fillna(0.0)
+    den = (1.0 + proxy_gap).replace(-1.0, -0.999999)
+    proxy_daily = (1 + base_gap).fillna(1.0) * (1 + base_intra).fillna(1.0) - 1.0
     proxy_intra = ((1.0 + lev * proxy_daily) / den - 1.0).clip(lower=-0.95).fillna(0.0)
 
     real_gap, real_intra = seg_returns(tqqq_ao, tqqq_ac)
     has = (~tqqq_ao.isna()) & (~tqqq_ac.isna())
 
     if CALIBRATE_TQQQ_PROXY:
-        real_T = ((1 + real_gap) * (1 + real_intra) - 1.0)
-        prox_T = ((1 + proxy_gap) * (1 + proxy_intra) - 1.0)
+        real_T = (1 + real_gap) * (1 + real_intra) - 1.0
+        prox_T = (1 + proxy_gap) * (1 + proxy_intra) - 1.0
         overlap = real_T.dropna().index.intersection(prox_T.dropna().index)
         if len(overlap) >= 200:
             b, a = np.polyfit(prox_T.loc[overlap].values, real_T.loc[overlap].values, 1)
             pre = ~has
-            T_pre = ((1 + proxy_gap.loc[pre]) * (1 + proxy_intra.loc[pre]) - 1.0)
+            T_pre = (1 + proxy_gap.loc[pre]) * (1 + proxy_intra.loc[pre]) - 1.0
             T_adj = a + b * T_pre
-            proxy_intra.loc[pre] = ((1.0 + T_adj) / (1.0 + proxy_gap.loc[pre]) - 1.0).clip(lower=-0.95)
+            proxy_intra.loc[pre] = (
+                (1.0 + T_adj) / (1.0 + proxy_gap.loc[pre]) - 1.0
+            ).clip(lower=-0.95)
 
-    gap   = real_gap.where(has, proxy_gap).fillna(0.0)
+    gap = real_gap.where(has, proxy_gap).fillna(0.0)
     intra = real_intra.where(has, proxy_intra).fillna(0.0)
     proxied = ~has
     return gap, intra, proxied
 
+
 def build_asset_returns_SPXL():
     base_gap, base_intra = seg_returns(spy_ao, spy_ac)
     lev = 3.0
-    proxy_gap   = (lev * base_gap).clip(lower=-0.95).fillna(0.0)
-    den         = (1.0 + proxy_gap).replace(-1.0, -0.999999)
-    proxy_daily = ((1 + base_gap).fillna(1.0) * (1 + base_intra).fillna(1.0) - 1.0)
+    proxy_gap = (lev * base_gap).clip(lower=-0.95).fillna(0.0)
+    den = (1.0 + proxy_gap).replace(-1.0, -0.999999)
+    proxy_daily = (1 + base_gap).fillna(1.0) * (1 + base_intra).fillna(1.0) - 1.0
     proxy_intra = ((1.0 + lev * proxy_daily) / den - 1.0).clip(lower=-0.95).fillna(0.0)
 
     real_gap, real_intra = seg_returns(spxl_ao, spxl_ac)
     has = (~spxl_ao.isna()) & (~spxl_ac.isna())
 
     if CALIBRATE_SPXL_PROXY:
-        real_T = ((1 + real_gap) * (1 + real_intra) - 1.0)
-        prox_T = ((1 + proxy_gap) * (1 + proxy_intra) - 1.0)
+        real_T = (1 + real_gap) * (1 + real_intra) - 1.0
+        prox_T = (1 + proxy_gap) * (1 + proxy_intra) - 1.0
         overlap = real_T.dropna().index.intersection(prox_T.dropna().index)
         if len(overlap) >= 200:
             b, a = np.polyfit(prox_T.loc[overlap].values, real_T.loc[overlap].values, 1)
             pre = ~has
-            T_pre = ((1 + proxy_gap.loc[pre]) * (1 + proxy_intra.loc[pre]) - 1.0)
+            T_pre = (1 + proxy_gap.loc[pre]) * (1 + proxy_intra.loc[pre]) - 1.0
             T_adj = a + b * T_pre
-            proxy_intra.loc[pre] = ((1.0 + T_adj) / (1.0 + proxy_gap.loc[pre]) - 1.0).clip(lower=-0.95)
+            proxy_intra.loc[pre] = (
+                (1.0 + T_adj) / (1.0 + proxy_gap.loc[pre]) - 1.0
+            ).clip(lower=-0.95)
 
-    gap   = real_gap.where(has, proxy_gap).fillna(0.0)
+    gap = real_gap.where(has, proxy_gap).fillna(0.0)
     intra = real_intra.where(has, proxy_intra).fillna(0.0)
     proxied = ~has
     return gap, intra, proxied
 
+
 def build_asset_returns_QLD():
     base_gap, base_intra = seg_returns(ndx_ao, ndx_ac)
     lev = 2.0
-    proxy_gap   = (lev * base_gap).clip(lower=-0.95).fillna(0.0)
-    den         = (1.0 + proxy_gap).replace(-1.0, -0.999999)
-    proxy_daily = ((1 + base_gap).fillna(1.0) * (1 + base_intra).fillna(1.0) - 1.0)
+    proxy_gap = (lev * base_gap).clip(lower=-0.95).fillna(0.0)
+    den = (1.0 + proxy_gap).replace(-1.0, -0.999999)
+    proxy_daily = (1 + base_gap).fillna(1.0) * (1 + base_intra).fillna(1.0) - 1.0
     proxy_intra = ((1.0 + lev * proxy_daily) / den - 1.0).clip(lower=-0.95).fillna(0.0)
 
     real_gap, real_intra = seg_returns(qld_ao, qld_ac)
     has = (~qld_ao.isna()) & (~qld_ac.isna())
 
     if CALIBRATE_QLD_PROXY:
-        real_T = ((1 + real_gap) * (1 + real_intra) - 1.0)
-        prox_T = ((1 + proxy_gap) * (1 + proxy_intra) - 1.0)
+        real_T = (1 + real_gap) * (1 + real_intra) - 1.0
+        prox_T = (1 + proxy_gap) * (1 + proxy_intra) - 1.0
         overlap = real_T.dropna().index.intersection(prox_T.dropna().index)
         if len(overlap) >= 200:
             b, a = np.polyfit(prox_T.loc[overlap].values, real_T.loc[overlap].values, 1)
             pre = ~has
-            T_pre = ((1 + proxy_gap.loc[pre]) * (1 + proxy_intra.loc[pre]) - 1.0)
+            T_pre = (1 + proxy_gap.loc[pre]) * (1 + proxy_intra.loc[pre]) - 1.0
             T_adj = a + b * T_pre
-            proxy_intra.loc[pre] = ((1.0 + T_adj) / (1.0 + proxy_gap.loc[pre]) - 1.0).clip(lower=-0.95)
+            proxy_intra.loc[pre] = (
+                (1.0 + T_adj) / (1.0 + proxy_gap.loc[pre]) - 1.0
+            ).clip(lower=-0.95)
 
-    gap   = real_gap.where(has, proxy_gap).fillna(0.0)
+    gap = real_gap.where(has, proxy_gap).fillna(0.0)
     intra = real_intra.where(has, proxy_intra).fillna(0.0)
     proxied = ~has
     return gap, intra, proxied
 
+
 def build_asset_returns_SSO():
     base_gap, base_intra = seg_returns(spy_ao, spy_ac)
     lev = 2.0
-    proxy_gap   = (lev * base_gap).clip(lower=-0.95).fillna(0.0)
-    den         = (1.0 + proxy_gap).replace(-1.0, -0.999999)
-    proxy_daily = ((1 + base_gap).fillna(1.0) * (1 + base_intra).fillna(1.0) - 1.0)
+    proxy_gap = (lev * base_gap).clip(lower=-0.95).fillna(0.0)
+    den = (1.0 + proxy_gap).replace(-1.0, -0.999999)
+    proxy_daily = (1 + base_gap).fillna(1.0) * (1 + base_intra).fillna(1.0) - 1.0
     proxy_intra = ((1.0 + lev * proxy_daily) / den - 1.0).clip(lower=-0.95).fillna(0.0)
 
     real_gap, real_intra = seg_returns(sso_ao, sso_ac)
     has = (~sso_ao.isna()) & (~sso_ac.isna())
 
     if CALIBRATE_SSO_PROXY:
-        real_T = ((1 + real_gap) * (1 + real_intra) - 1.0)
-        prox_T = ((1 + proxy_gap) * (1 + proxy_intra) - 1.0)
+        real_T = (1 + real_gap) * (1 + real_intra) - 1.0
+        prox_T = (1 + proxy_gap) * (1 + proxy_intra) - 1.0
         overlap = real_T.dropna().index.intersection(prox_T.dropna().index)
         if len(overlap) >= 200:
             b, a = np.polyfit(prox_T.loc[overlap].values, real_T.loc[overlap].values, 1)
             pre = ~has
-            T_pre = ((1 + proxy_gap.loc[pre]) * (1 + proxy_intra.loc[pre]) - 1.0)
+            T_pre = (1 + proxy_gap.loc[pre]) * (1 + proxy_intra.loc[pre]) - 1.0
             T_adj = a + b * T_pre
-            proxy_intra.loc[pre] = ((1.0 + T_adj) / (1.0 + proxy_gap.loc[pre]) - 1.0).clip(lower=-0.95)
+            proxy_intra.loc[pre] = (
+                (1.0 + T_adj) / (1.0 + proxy_gap.loc[pre]) - 1.0
+            ).clip(lower=-0.95)
 
-    gap   = real_gap.where(has, proxy_gap).fillna(0.0)
+    gap = real_gap.where(has, proxy_gap).fillna(0.0)
     intra = real_intra.where(has, proxy_intra).fillna(0.0)
     proxied = ~has
     return gap, intra, proxied
 
-gap_GLD,  intra_GLD,  prox_mask_GLD  = build_asset_returns_GLD()
+
+gap_GLD, intra_GLD, prox_mask_GLD = build_asset_returns_GLD()
 gap_TQQQ, intra_TQQQ, prox_mask_TQQQ = build_asset_returns_TQQQ()
 gap_SPXL, intra_SPXL, prox_mask_SPXL = build_asset_returns_SPXL()
-gap_QLD,  intra_QLD,  prox_mask_QLD  = build_asset_returns_QLD()
-gap_SSO,  intra_SSO,  prox_mask_SSO  = build_asset_returns_SSO()
+gap_QLD, intra_QLD, prox_mask_QLD = build_asset_returns_QLD()
+gap_SSO, intra_SSO, prox_mask_SSO = build_asset_returns_SSO()
 
-prox_mask_GLD  = prox_mask_GLD.reindex(idx).fillna(False).astype(bool)
+prox_mask_GLD = prox_mask_GLD.reindex(idx).fillna(False).astype(bool)
 prox_mask_TQQQ = prox_mask_TQQQ.reindex(idx).fillna(False).astype(bool)
 prox_mask_SPXL = prox_mask_SPXL.reindex(idx).fillna(False).astype(bool)
-prox_mask_QLD  = prox_mask_QLD.reindex(idx).fillna(False).astype(bool)
-prox_mask_SSO  = prox_mask_SSO.reindex(idx).fillna(False).astype(bool)
+prox_mask_QLD = prox_mask_QLD.reindex(idx).fillna(False).astype(bool)
+prox_mask_SSO = prox_mask_SSO.reindex(idx).fillna(False).astype(bool)
 
-raw_close  = {"TQQQ": tqqq_cl, "SPXL": spxl_cl, "GLD": gld_cl, "QLD": qld_cl, "SSO": sso_cl, "IEF": ief_cl}
-div_series = {"TQQQ": div_tqqq, "SPXL": div_spxl, "GLD": div_gld, "QLD": div_qld, "SSO": div_sso, "IEF": div_ief}
+raw_close = {
+    "TQQQ": tqqq_cl,
+    "SPXL": spxl_cl,
+    "GLD": gld_cl,
+    "QLD": qld_cl,
+    "SSO": sso_cl,
+    "IEF": ief_cl,
+}
+div_series = {
+    "TQQQ": div_tqqq,
+    "SPXL": div_spxl,
+    "GLD": div_gld,
+    "QLD": div_qld,
+    "SSO": div_sso,
+    "IEF": div_ief,
+}
+
 
 # =========================
 # Regime builders (dual-anchor)
@@ -463,7 +526,7 @@ def hysteresis_series(price_w, sma_w, band_pct):
         if pd.isna(m):
             sig.loc[dt] = 0
             continue
-        p  = price_w.loc[dt]
+        p = price_w.loc[dt]
         up = (1 + band_pct) * m
         dn = (1 - band_pct) * m
         curr = prev
@@ -475,12 +538,13 @@ def hysteresis_series(price_w, sma_w, band_pct):
         prev = curr
     return sig
 
+
 def _weekly_state_from_anchor(anchor="W-FRI"):
     # Weekly snapshots anchored to 'anchor' (e.g., "W-THU" or "W-FRI")
     sma200 = ref_ac.rolling(SMA_SLOW, min_periods=SMA_SLOW).mean()
-    smamid = ref_ac.rolling(SMA_MID,  min_periods=SMA_MID ).mean()
+    smamid = ref_ac.rolling(SMA_MID, min_periods=SMA_MID).mean()
 
-    ref_w  = ref_ac.resample(anchor).last()
+    ref_w = ref_ac.resample(anchor).last()
     s200_w = sma200.resample(anchor).last()
     smid_w = smamid.resample(anchor).last()
 
@@ -495,7 +559,9 @@ def _weekly_state_from_anchor(anchor="W-FRI"):
     rv_d = ndx_ret.rolling(VOL_LOOKBACK_D).std() * math.sqrt(252)
     rv_w = rv_d.resample(anchor).last().reindex(ref_w.index).ffill()
 
-    running_max_ndx = ndx_ac.rolling(DD_LOOKBACK_D, min_periods=max(1, int(DD_LOOKBACK_D*0.8))).max()
+    running_max_ndx = ndx_ac.rolling(
+        DD_LOOKBACK_D, min_periods=max(1, int(DD_LOOKBACK_D * 0.8))
+    ).max()
     dd_d = ndx_ac / running_max_ndx - 1.0
     dd_w = dd_d.resample(anchor).last().reindex(ref_w.index).ffill()
 
@@ -506,8 +572,12 @@ def _weekly_state_from_anchor(anchor="W-FRI"):
         if ADAPTIVE_UP_WINDOW:
             win_b = max(1, int(MID_UP_WINDOW_WEEKS_BENIGN))
             win_s = max(1, int(MID_UP_WINDOW_WEEKS_STRESSED))
-            up_mid_win_b = up_mid.rolling(win_b, min_periods=1).max().fillna(0).astype(int)
-            up_mid_win_s = up_mid.rolling(win_s, min_periods=1).max().fillna(0).astype(int)
+            up_mid_win_b = (
+                up_mid.rolling(win_b, min_periods=1).max().fillna(0).astype(int)
+            )
+            up_mid_win_s = (
+                up_mid.rolling(win_s, min_periods=1).max().fillna(0).astype(int)
+            )
             up_mid_window = up_mid_win_s.where(stressed_w, up_mid_win_b).astype(int)
         else:
             up_mid_window = up_mid.rolling(4, min_periods=1).max().fillna(0).astype(int)
@@ -529,7 +599,7 @@ def _weekly_state_from_anchor(anchor="W-FRI"):
 
     # Distance gate (adaptive if stressed)
     if USE_DIST_GATE_200:
-        dist200 = (ref_w / s200_w - 1.0)
+        dist200 = ref_w / s200_w - 1.0
         if USE_ADAPTIVE_DIST:
             state_w[(state_w == 2) & stressed_w & (dist200 <= DELTA_200_PCT)] = 1
         else:
@@ -547,9 +617,11 @@ def _weekly_state_from_anchor(anchor="W-FRI"):
 
     return state_w
 
+
 def _exec_next_bd(state_w):
     # Decide at weekly close, EXECUTE next trading-day open
     return state_w.reindex(idx).ffill().shift(1).fillna(0).astype(int)
+
 
 def _combine_thu_fri_exec(exec_thu, exec_fri):
     # Combine two daily execution streams (Thu->Fri and Fri->Mon)
@@ -565,13 +637,19 @@ def _combine_thu_fri_exec(exec_thu, exec_fri):
         out.loc[d] = curr
     return out.astype(int)
 
+
 def rebuild_regime():
     global swap_dates_all, regime_intraday_all, ref_ac, sma_slow, state_thu, state_fri
     # Ensure ref_ac uses current SIGNAL_SYMBOL
-    if SIGNAL_SYMBOL in px["Adj Close"].columns and not px["Adj Close"][SIGNAL_SYMBOL].isnull().all():
+    if (
+        SIGNAL_SYMBOL in px["Adj Close"].columns
+        and not px["Adj Close"][SIGNAL_SYMBOL].isnull().all()
+    ):
         ref_ac = px["Adj Close"][SIGNAL_SYMBOL].dropna().reindex(idx)
     else:
-        print(f"Warning: SIGNAL_SYMBOL {SIGNAL_SYMBOL} not found or NaN, using ^GSPC fallback.")
+        print(
+            f"Warning: SIGNAL_SYMBOL {SIGNAL_SYMBOL} not found or NaN, using ^GSPC fallback."
+        )
         ref_ac = px["Adj Close"]["^GSPC"].dropna().reindex(idx)
 
     sma_slow = ref_ac.rolling(SMA_SLOW, min_periods=SMA_SLOW).mean()
@@ -588,9 +666,11 @@ def rebuild_regime():
     regime_intraday_all = _combine_thu_fri_exec(exec_thu, exec_fri)
     swap_dates_all = set(idx[regime_intraday_all.ne(regime_intraday_all.shift(1))])
 
+
 # Warm-up
 sma_slow = ref_ac.rolling(SMA_SLOW, min_periods=SMA_SLOW).mean()
 rebuild_regime()
+
 
 # =========================
 # Risk-off momentum (GLD vs IEF)
@@ -605,13 +685,18 @@ def rebuild_risk_off_momentum():
     try:
         if "IEF" in px["Adj Close"].columns and ief_ac.notna().sum() > 100:
             gap_IEF, intra_IEF = seg_returns(ief_ao, ief_ac)
-            gap_IEF = gap_IEF.fillna(0.0); intra_IEF = intra_IEF.fillna(0.0)
+            gap_IEF = gap_IEF.fillna(0.0)
+            intra_IEF = intra_IEF.fillna(0.0)
             HAVE_IEF = True
         else:
             gap_IEF = pd.Series(0.0, index=idx)
             intra_IEF = pd.Series(0.0, index=idx)
         mom_gld = mom(gld_ac, RISK_OFF_LOOKBACK_D).fillna(-1.0)
-        mom_ief = mom(ief_ac, RISK_OFF_LOOKBACK_D).fillna(-1.0) if HAVE_IEF else pd.Series(-1.0, index=idx)
+        mom_ief = (
+            mom(ief_ac, RISK_OFF_LOOKBACK_D).fillna(-1.0)
+            if HAVE_IEF
+            else pd.Series(-1.0, index=idx)
+        )
     except Exception:
         HAVE_IEF = False
         mom_gld = pd.Series(-1.0, index=idx)
@@ -623,7 +708,9 @@ def rebuild_risk_off_momentum():
     mom_gld_use = mom_gld.shift(1)
     mom_ief_use = mom_ief.shift(1)
 
+
 rebuild_risk_off_momentum()
+
 
 # =========================
 # Scheduler (3-state, Nasdaq lockout) with availability fallback
@@ -633,10 +720,23 @@ def build_locked_schedule(run_idx):
     swap_set = set(d for d in swap_dates_all if d in set(run_idx))
 
     # Core gap/intra maps including extras
-    gap_map   = {"TQQQ": gap_TQQQ, "SPXL": gap_SPXL, "QLD": gap_QLD, "SSO": gap_SSO, "GLD": gap_GLD}
-    intra_map = {"TQQQ": intra_TQQQ, "SPXL": intra_SPXL, "QLD": intra_QLD, "SSO": intra_SSO, "GLD": intra_GLD}
+    gap_map = {
+        "TQQQ": gap_TQQQ,
+        "SPXL": gap_SPXL,
+        "QLD": gap_QLD,
+        "SSO": gap_SSO,
+        "GLD": gap_GLD,
+    }
+    intra_map = {
+        "TQQQ": intra_TQQQ,
+        "SPXL": intra_SPXL,
+        "QLD": intra_QLD,
+        "SSO": intra_SSO,
+        "GLD": intra_GLD,
+    }
     if globals().get("HAVE_IEF", False):
-        gap_map["IEF"] = gap_IEF; intra_map["IEF"] = intra_IEF
+        gap_map["IEF"] = gap_IEF
+        intra_map["IEF"] = intra_IEF
 
     # extras (no proxies)
     gap_extra, intra_extra, ac_extra = {}, {}, {}
@@ -645,34 +745,47 @@ def build_locked_schedule(run_idx):
         try:
             ao_e, ac_e, _ = get_adj_ohlc(px, sym, idx)
             g_e, i_e = seg_returns(ao_e, ac_e)
-            gap_extra[sym]   = g_e.fillna(0.0)
+            gap_extra[sym] = g_e.fillna(0.0)
             intra_extra[sym] = i_e.fillna(0.0)
-            ac_extra[sym]    = ac_e
+            ac_extra[sym] = ac_e
         except Exception:
-            gap_extra[sym]   = pd.Series(0.0, index=idx)
+            gap_extra[sym] = pd.Series(0.0, index=idx)
             intra_extra[sym] = pd.Series(0.0, index=idx)
-            ac_extra[sym]    = pd.Series(index=idx, dtype=float)
-    gap_map.update(gap_extra); intra_map.update(intra_extra)
+            ac_extra[sym] = pd.Series(index=idx, dtype=float)
+    gap_map.update(gap_extra)
+    intra_map.update(intra_extra)
 
     def has_data(sym, d):
-        if sym in {"TQQQ","SPXL","QLD","SSO","GLD"}:
-            base_ac = {"TQQQ": tqqq_ac, "SPXL": spxl_ac, "QLD": qld_ac, "SSO": sso_ac, "GLD": gld_ac}[sym]
+        if sym in {"TQQQ", "SPXL", "QLD", "SSO", "GLD"}:
+            base_ac = {
+                "TQQQ": tqqq_ac,
+                "SPXL": spxl_ac,
+                "QLD": qld_ac,
+                "SSO": sso_ac,
+                "GLD": gld_ac,
+            }[sym]
             return pd.notna(base_ac.get(d, np.nan))
         if sym == "IEF":
             return globals().get("HAVE_IEF", False) and pd.notna(ief_ac.get(d, np.nan))
-        return pd.notna(ac_extra.get(sym, pd.Series(index=idx, dtype=float)).get(d, np.nan))
+        return pd.notna(
+            ac_extra.get(sym, pd.Series(index=idx, dtype=float)).get(d, np.nan)
+        )
 
     def choose_risk_off(d):
         if USE_DUAL_RISK_OFF and HAVE_IEF:
-            return "GLD" if float(mom_gld_use.get(d, -1.0)) >= float(mom_ief_use.get(d, -1.0)) else "IEF"
+            return (
+                "GLD"
+                if float(mom_gld_use.get(d, -1.0)) >= float(mom_ief_use.get(d, -1.0))
+                else "IEF"
+            )
         return "GLD"
 
     # Original selection (unchanged)
     def choose_asset(regime, d, lock_until):
-        if regime == 2:   # 3x
+        if regime == 2:  # 3x
             return "SPXL" if d <= lock_until else "TQQQ"
-        elif regime == 1: # 2x
-            return "SSO"  if d <= lock_until else "QLD"
+        elif regime == 1:  # 2x
+            return "SSO" if d <= lock_until else "QLD"
         else:
             return choose_risk_off(d)
 
@@ -719,7 +832,7 @@ def build_locked_schedule(run_idx):
             continue
 
         if d in swap_set:
-            leg_gross *= (1.0 + gap_map[curr_asset].get(d, 0.0))
+            leg_gross *= 1.0 + gap_map[curr_asset].get(d, 0.0)
             if (curr_asset in {"TQQQ", "QLD"}) and (leg_gross - 1.0 < 0.0):
                 lockout_until = d + Day(LOCKOUT_DAYS)
 
@@ -731,10 +844,13 @@ def build_locked_schedule(run_idx):
             leg_gross = 1.0 + intra_map[curr_asset].get(d, 0.0)
             sched.iloc[i] = curr_asset
         else:
-            leg_gross *= (1.0 + gap_map[curr_asset].get(d, 0.0)) * (1.0 + intra_map[curr_asset].get(d, 0.0))
+            leg_gross *= (1.0 + gap_map[curr_asset].get(d, 0.0)) * (
+                1.0 + intra_map[curr_asset].get(d, 0.0)
+            )
             sched.iloc[i] = curr_asset
 
     return sched
+
 
 # =========================
 # Simulation engine
@@ -742,38 +858,78 @@ def build_locked_schedule(run_idx):
 # Use prior day's move for "stress slippage" toggle (no lookahead at open)
 ref_ret_abs = gspc_ac.pct_change().abs().shift(1).reindex(idx).fillna(0.0)
 
+
 def trade_cost(d):
-    bps = SLIPPAGE_BPS_STRESS if (d in ref_ret_abs.index and ref_ret_abs.loc[d] >= STRESS_THRESHOLD) else SLIPPAGE_BPS
+    bps = (
+        SLIPPAGE_BPS_STRESS
+        if (d in ref_ret_abs.index and ref_ret_abs.loc[d] >= STRESS_THRESHOLD)
+        else SLIPPAGE_BPS
+    )
     return bps / 10000.0
+
 
 def proxy_drag(asset, d):
     if not APPLY_PROXY_DRAGS:
         return 1.0
     if asset == "TQQQ" and bool(prox_mask_TQQQ.get(d, False)):
-        if CALIBRATE_TQQQ_PROXY: return 1.0
-        fin_d = LEV_EXCESS * float(rf_daily.get(d, 0.0)) if d in rf_daily.index else LEV_EXCESS * (FIN_FALLBACK_ANNUAL/252.0)
+        if CALIBRATE_TQQQ_PROXY:
+            return 1.0
+        fin_d = (
+            LEV_EXCESS * float(rf_daily.get(d, 0.0))
+            if d in rf_daily.index
+            else LEV_EXCESS * (FIN_FALLBACK_ANNUAL / 252.0)
+        )
         return (1.0 - fee_daily_3x) * (1.0 - fin_d)
     if asset == "SPXL" and bool(prox_mask_SPXL.get(d, False)):
-        if CALIBRATE_SPXL_PROXY: return 1.0
-        fin_d = LEV_EXCESS * float(rf_daily.get(d, 0.0)) if d in rf_daily.index else LEV_EXCESS * (FIN_FALLBACK_ANNUAL/252.0)
+        if CALIBRATE_SPXL_PROXY:
+            return 1.0
+        fin_d = (
+            LEV_EXCESS * float(rf_daily.get(d, 0.0))
+            if d in rf_daily.index
+            else LEV_EXCESS * (FIN_FALLBACK_ANNUAL / 252.0)
+        )
         return (1.0 - fee_daily_3x) * (1.0 - fin_d)
     if asset == "QLD" and bool(prox_mask_QLD.get(d, False)):
-        if CALIBRATE_QLD_PROXY: return 1.0
-        fin_d = LEV_EXCESS_2X * float(rf_daily.get(d, 0.0)) if d in rf_daily.index else LEV_EXCESS_2X * (FIN_FALLBACK_ANNUAL/252.0)
+        if CALIBRATE_QLD_PROXY:
+            return 1.0
+        fin_d = (
+            LEV_EXCESS_2X * float(rf_daily.get(d, 0.0))
+            if d in rf_daily.index
+            else LEV_EXCESS_2X * (FIN_FALLBACK_ANNUAL / 252.0)
+        )
         return (1.0 - fee_daily_2x) * (1.0 - fin_d)
     if asset == "SSO" and bool(prox_mask_SSO.get(d, False)):
-        if CALIBRATE_SSO_PROXY: return 1.0
-        fin_d = LEV_EXCESS_2X * float(rf_daily.get(d, 0.0)) if d in rf_daily.index else LEV_EXCESS_2X * (FIN_FALLBACK_ANNUAL/252.0)
+        if CALIBRATE_SSO_PROXY:
+            return 1.0
+        fin_d = (
+            LEV_EXCESS_2X * float(rf_daily.get(d, 0.0))
+            if d in rf_daily.index
+            else LEV_EXCESS_2X * (FIN_FALLBACK_ANNUAL / 252.0)
+        )
         return (1.0 - fee_daily_2x) * (1.0 - fin_d)
     if asset == "GLD" and bool(prox_mask_GLD.get(d, False)):
-        return (1.0 - gld_fee_daily)
+        return 1.0 - gld_fee_daily
     return 1.0
 
+
 def sim_strategy(run_idx, paper=False):
-    gap_map   = {"TQQQ": gap_TQQQ, "SPXL": gap_SPXL, "QLD": gap_QLD, "SSO": gap_SSO, "GLD": gap_GLD}
-    intra_map = {"TQQQ": intra_TQQQ, "SPXL": intra_SPXL, "QLD": intra_QLD, "SSO": intra_SSO, "GLD": intra_GLD}
+    gap_map = {
+        "TQQQ": gap_TQQQ,
+        "SPXL": gap_SPXL,
+        "QLD": gap_QLD,
+        "SSO": gap_SSO,
+        "GLD": gap_GLD,
+    }
+    intra_map = {
+        "TQQQ": intra_TQQQ,
+        "SPXL": intra_SPXL,
+        "QLD": intra_QLD,
+        "SSO": intra_SSO,
+        "GLD": intra_GLD,
+    }
     if globals().get("HAVE_IEF", False):
-        gap_map["IEF"] = gap_IEF; intra_map["IEF"] = intra_IEF
+        gap_map["IEF"] = gap_IEF
+        intra_map["IEF"] = intra_IEF
 
     # Add extra lineup symbols so schedule fallback (if ever used) can value correctly
     # (These extras have no proxies; used only if base/fallback lack data)
@@ -784,12 +940,13 @@ def sim_strategy(run_idx, paper=False):
         try:
             ao_e, ac_e, _ = get_adj_ohlc(px, sym, idx)
             g_e, i_e = seg_returns(ao_e, ac_e)
-            gap_extra[sym]   = g_e.fillna(0.0)
+            gap_extra[sym] = g_e.fillna(0.0)
             intra_extra[sym] = i_e.fillna(0.0)
         except Exception:
-            gap_extra[sym]   = pd.Series(0.0, index=idx)
+            gap_extra[sym] = pd.Series(0.0, index=idx)
             intra_extra[sym] = pd.Series(0.0, index=idx)
-    gap_map.update(gap_extra); intra_map.update(intra_extra)
+    gap_map.update(gap_extra)
+    intra_map.update(intra_extra)
 
     sched = build_locked_schedule(run_idx)
 
@@ -804,20 +961,24 @@ def sim_strategy(run_idx, paper=False):
 
             if curr_asset is None:
                 curr_asset = next_asset
-                eq *= (1.0 + intra_map[curr_asset].get(d, 0.0))
-                equity_curve.append(eq); daily_index.append(d)
+                eq *= 1.0 + intra_map[curr_asset].get(d, 0.0)
+                equity_curve.append(eq)
+                daily_index.append(d)
                 continue
 
-            eq *= (1.0 + gap_map[curr_asset].get(d, 0.0))
+            eq *= 1.0 + gap_map[curr_asset].get(d, 0.0)
             if next_asset != curr_asset:
                 curr_asset = next_asset
-            eq *= (1.0 + intra_map[curr_asset].get(d, 0.0))
+            eq *= 1.0 + intra_map[curr_asset].get(d, 0.0)
 
-            equity_curve.append(eq); daily_index.append(d)
-        return {"equity_curve": pd.Series(equity_curve, index=pd.DatetimeIndex(daily_index))}
+            equity_curve.append(eq)
+            daily_index.append(d)
+        return {
+            "equity_curve": pd.Series(equity_curve, index=pd.DatetimeIndex(daily_index))
+        }
 
     # REAL branch (taxes)
-    eq_pre   = START_CAPITAL
+    eq_pre = START_CAPITAL
     eq_after = START_CAPITAL
     equity_curve = []
     daily_index = []
@@ -829,7 +990,8 @@ def sim_strategy(run_idx, paper=False):
 
     realized_ST = defaultdict(float)
     realized_LT = defaultdict(float)
-    carry_ST = 0.0; carry_LT = 0.0
+    carry_ST = 0.0
+    carry_LT = 0.0
     div_tax_by_year = defaultdict(float)
 
     eq_pre_prev_close = None
@@ -842,40 +1004,47 @@ def sim_strategy(run_idx, paper=False):
         if curr_asset is None:
             curr_asset = next_asset
             c = trade_cost(d)
-            eq_pre   *= (1.0 - c)
-            eq_after *= (1.0 - c)
+            eq_pre *= 1.0 - c
+            eq_after *= 1.0 - c
             entry_date = d
             entry_eq_pre_after_buy = eq_pre
             cum_div_leg_pre = 0.0
 
             drag = proxy_drag(curr_asset, d)
-            eq_pre   *= drag
+            eq_pre *= drag
             eq_after *= drag
-            eq_pre   *= (1.0 + intra_map[curr_asset].get(d, 0.0))
-            eq_after *= (1.0 + intra_map[curr_asset].get(d, 0.0))
-            equity_curve.append(eq_after); daily_index.append(d)
+            eq_pre *= 1.0 + intra_map[curr_asset].get(d, 0.0)
+            eq_after *= 1.0 + intra_map[curr_asset].get(d, 0.0)
+            equity_curve.append(eq_after)
+            daily_index.append(d)
             eq_pre_prev_close = eq_pre
             prev_d = d
             continue
 
-        div_amt = float(div_series.get(curr_asset, pd.Series(0.0, index=run_idx)).loc[d])
+        div_amt = float(
+            div_series.get(curr_asset, pd.Series(0.0, index=run_idx)).loc[d]
+        )
         if div_amt != 0.0 and prev_d is not None:
             prev_close_raw = raw_close[curr_asset].loc[prev_d]
-            if pd.notna(prev_close_raw) and prev_close_raw != 0.0 and eq_pre_prev_close is not None:
+            if (
+                pd.notna(prev_close_raw)
+                and prev_close_raw != 0.0
+                and eq_pre_prev_close is not None
+            ):
                 div_cash = float(eq_pre_prev_close) * (div_amt / float(prev_close_raw))
-                div_tax  = DIV_TAX_RATE * div_cash
+                div_tax = DIV_TAX_RATE * div_cash
                 eq_after -= div_tax
                 div_tax_by_year[y] += div_tax
                 cum_div_leg_pre += div_cash
 
         g = gap_map[curr_asset].get(d, 0.0)
-        eq_pre   *= (1.0 + g)
-        eq_after *= (1.0 + g)
+        eq_pre *= 1.0 + g
+        eq_after *= 1.0 + g
 
         if next_asset != curr_asset:
             c = trade_cost(d)
-            eq_pre   *= (1.0 - c)
-            eq_after *= (1.0 - c)
+            eq_pre *= 1.0 - c
+            eq_after *= 1.0 - c
 
             hold_days = (d - entry_date).days
             realized_pre = eq_pre - entry_eq_pre_after_buy - cum_div_leg_pre
@@ -886,36 +1055,42 @@ def sim_strategy(run_idx, paper=False):
 
             curr_asset = next_asset
             c = trade_cost(d)
-            eq_pre   *= (1.0 - c)
-            eq_after *= (1.0 - c)
+            eq_pre *= 1.0 - c
+            eq_after *= 1.0 - c
 
             entry_date = d
             entry_eq_pre_after_buy = eq_pre
             cum_div_leg_pre = 0.0
 
             drag = proxy_drag(curr_asset, d)
-            eq_pre   *= drag
+            eq_pre *= drag
             eq_after *= drag
-            eq_pre   *= (1.0 + intra_map[curr_asset].get(d, 0.0))
-            eq_after *= (1.0 + intra_map[curr_asset].get(d, 0.0))
+            eq_pre *= 1.0 + intra_map[curr_asset].get(d, 0.0)
+            eq_after *= 1.0 + intra_map[curr_asset].get(d, 0.0)
         else:
             drag = proxy_drag(curr_asset, d)
-            eq_pre   *= drag
+            eq_pre *= drag
             eq_after *= drag
-            eq_pre   *= (1.0 + intra_map[curr_asset].get(d, 0.0))
-            eq_after *= (1.0 + intra_map[curr_asset].get(d, 0.0))
+            eq_pre *= 1.0 + intra_map[curr_asset].get(d, 0.0)
+            eq_after *= 1.0 + intra_map[curr_asset].get(d, 0.0)
 
         # Year-end taxes
-        is_year_end = (i == len(run_idx) - 1) or (run_idx[i+1].year != y)
+        is_year_end = (i == len(run_idx) - 1) or (run_idx[i + 1].year != y)
         if is_year_end:
             st = realized_ST[y] + carry_ST
             lt = realized_LT[y] + carry_LT
             if st > 0 and lt < 0:
-                off = min(st, -lt); st -= off; lt += off
+                off = min(st, -lt)
+                st -= off
+                lt += off
             elif st < 0 and lt > 0:
-                off = min(lt, -st); lt -= off; st += off
+                off = min(lt, -st)
+                lt -= off
+                st += off
 
-            tax_cap = 0.0; new_cf_st = 0.0; new_cf_lt = 0.0
+            tax_cap = 0.0
+            new_cf_st = 0.0
+            new_cf_lt = 0.0
             if st >= 0 and lt >= 0:
                 tax_cap = ST_RATE * st + LT_RATE * lt
             elif st <= 0 and lt <= 0:
@@ -923,26 +1098,31 @@ def sim_strategy(run_idx, paper=False):
                 deduct = min(LOSS_DED_CAP, net_loss)
                 tax_cap = -ORD_RATE * deduct
                 rem = net_loss - deduct
-                mag_st = -st; mag_lt = -lt
+                mag_st = -st
+                mag_lt = -lt
                 if (mag_st + mag_lt) > 0:
                     share_st = rem * (mag_st / (mag_st + mag_lt))
                     share_lt = rem - share_st
                     new_cf_st = -share_st
                     new_cf_lt = -share_lt
             else:
-                if st > 0: tax_cap += ST_RATE * st
-                if lt > 0: tax_cap += LT_RATE * lt
+                if st > 0:
+                    tax_cap += ST_RATE * st
+                if lt > 0:
+                    tax_cap += LT_RATE * lt
 
             eq_after -= tax_cap
             carry_ST, carry_LT = new_cf_st, new_cf_lt
             eq_pre = eq_after
 
-        equity_curve.append(eq_after); daily_index.append(d)
+        equity_curve.append(eq_after)
+        daily_index.append(d)
         eq_pre_prev_close = eq_pre
         prev_d = d
 
     equity_curve = pd.Series(equity_curve, index=pd.DatetimeIndex(daily_index))
     return {"equity_curve": equity_curve}
+
 
 # =========================
 # Segment runner
@@ -954,18 +1134,19 @@ def build_run_index(start_date, end_date):
     run_idx = idx[mask]
     return run_idx
 
+
 def metrics_from_curve(curve):
     if curve is None or curve.empty:
         return {}
-    cagr  = cagr_from_curve(curve)
-    mdd   = max_drawdown_from_curve(curve)
-    vol   = annualized_vol_from_curve(curve)
-    shrp  = sharpe_from_curve(curve)
-    sort  = sortino_from_curve(curve)
-    calm  = calmar_from_curve(curve)
-    yr    = year_returns_from_curve(curve)
+    cagr = cagr_from_curve(curve)
+    mdd = max_drawdown_from_curve(curve)
+    vol = annualized_vol_from_curve(curve)
+    shrp = sharpe_from_curve(curve)
+    sort = sortino_from_curve(curve)
+    calm = calmar_from_curve(curve)
+    yr = year_returns_from_curve(curve)
     best_y = float(yr.max()) if not yr.empty else np.nan
-    worst_y= float(yr.min()) if not yr.empty else np.nan
+    worst_y = float(yr.min()) if not yr.empty else np.nan
     win_rate = float((yr > 0).mean()) if not yr.empty else np.nan
     return {
         "Final Value": float(curve.iloc[-1]),
@@ -977,8 +1158,9 @@ def metrics_from_curve(curve):
         "Calmar": calm,
         "BestYear": best_y,
         "WorstYear": worst_y,
-        "WinRateYears": win_rate
+        "WinRateYears": win_rate,
     }
+
 
 def print_metrics(tag, m):
     if not m:
@@ -989,9 +1171,14 @@ def print_metrics(tag, m):
     print(f"  CAGR: {fmt_pct(m['CAGR'])}")
     print(f"  Max Drawdown: {fmt_pct(m['MaxDD'])}")
     print(f"  Ann Vol: {fmt_pct(m['AnnVol'])}")
-    print(f"  Sharpe: {m['Sharpe']:.2f}  |  Sortino: {m['Sortino']:.2f}  |  Calmar: {m['Calmar']:.2f}")
-    print(f"  Best Year: {fmt_pct(m['BestYear'])}  |  Worst Year: {fmt_pct(m['WorstYear'])}  |  % Winning Years: {100.0*m['WinRateYears']:.1f}%")
+    print(
+        f"  Sharpe: {m['Sharpe']:.2f}  |  Sortino: {m['Sortino']:.2f}  |  Calmar: {m['Calmar']:.2f}"
+    )
+    print(
+        f"  Best Year: {fmt_pct(m['BestYear'])}  |  Worst Year: {fmt_pct(m['WorstYear'])}  |  % Winning Years: {100.0 * m['WinRateYears']:.1f}%"
+    )
     print()
+
 
 def run_segment(name, start, end):
     run_idx = build_run_index(start, end)
@@ -999,16 +1186,17 @@ def run_segment(name, start, end):
         print(f"{name}: no run days (check dates/SMA warm-up).")
         return None, None, None
     res_paper = sim_strategy(run_idx, paper=True)
-    res_real  = sim_strategy(run_idx, paper=False)
+    res_real = sim_strategy(run_idx, paper=False)
     curve_paper = res_paper["equity_curve"]
-    curve_real  = res_real["equity_curve"]
+    curve_real = res_real["equity_curve"]
     m_paper = metrics_from_curve(curve_paper)
-    m_real  = metrics_from_curve(curve_real)
+    m_real = metrics_from_curve(curve_real)
 
     print(f"\n--- Yearly Returns for {name} ---")
     yr_paper = year_returns_from_curve(curve_paper).apply(fmt_pct)
-    yr_real  = year_returns_from_curve(curve_real).apply(fmt_pct)
-    df_yr = pd.DataFrame({"Paper": yr_paper, "Real": yr_real}); df_yr.index.name = "Year"
+    yr_real = year_returns_from_curve(curve_real).apply(fmt_pct)
+    df_yr = pd.DataFrame({"Paper": yr_paper, "Real": yr_real})
+    df_yr.index.name = "Year"
     if not df_yr.empty:
         print(df_yr.to_string())
     else:
@@ -1016,6 +1204,7 @@ def run_segment(name, start, end):
     print("--------------------------------------\n")
 
     return (curve_paper, curve_real, (m_paper, m_real))
+
 
 # =========================
 # Pure 2-state baseline (dual anchor)
@@ -1032,21 +1221,26 @@ def build_regime_by_SMA_baseline_dual():
         for dt in ref_w.index:
             m = sma_w.loc[dt]
             if pd.isna(m):
-                reg_w.loc[dt] = 0; continue
+                reg_w.loc[dt] = 0
+                continue
             p = ref_w.loc[dt]
             up = (1 + BAND_PCT) * m
             dn = (1 - BAND_PCT) * m
-            curr = 1 if (prev == 0 and p > up) else (0 if (prev == 1 and p < dn) else prev)
-            reg_w.loc[dt] = curr; prev = curr
+            curr = (
+                1 if (prev == 0 and p > up) else (0 if (prev == 1 and p < dn) else prev)
+            )
+            reg_w.loc[dt] = curr
+            prev = curr
         return reg_w.replace({1: 2, 0: 0}).astype(int)
 
     state_thu_b = baseline_state("W-THU")
     state_fri_b = baseline_state("W-FRI")
-    exec_thu_b  = _exec_next_bd(state_thu_b)
-    exec_fri_b  = _exec_next_bd(state_fri_b)
+    exec_thu_b = _exec_next_bd(state_thu_b)
+    exec_fri_b = _exec_next_bd(state_fri_b)
     sig = _combine_thu_fri_exec(exec_thu_b, exec_fri_b)
     swap = set(idx[sig.ne(sig.shift(1))])
     return swap, sig
+
 
 def run_pure_baseline_segment(name, start, end):
     run_idx = build_run_index(start, end)
@@ -1055,7 +1249,10 @@ def run_pure_baseline_segment(name, start, end):
         return None, None, None
 
     # Save globals
-    saved_swap, saved_reg = globals().get("swap_dates_all", None), globals().get("regime_intraday_all", None)
+    saved_swap, saved_reg = (
+        globals().get("swap_dates_all", None),
+        globals().get("regime_intraday_all", None),
+    )
 
     # Build baseline dual-day signal and splice
     swap_b, sig_b = build_regime_by_SMA_baseline_dual()
@@ -1063,24 +1260,30 @@ def run_pure_baseline_segment(name, start, end):
 
     try:
         res_paper = sim_strategy(run_idx, paper=True)
-        res_real  = sim_strategy(run_idx, paper=False)
+        res_real = sim_strategy(run_idx, paper=False)
     finally:
         # Restore full 3-state regime
-        globals()["swap_dates_all"], globals()["regime_intraday_all"] = saved_swap, saved_reg
+        globals()["swap_dates_all"], globals()["regime_intraday_all"] = (
+            saved_swap,
+            saved_reg,
+        )
         rebuild_regime()
 
     curve_paper = res_paper["equity_curve"]
-    curve_real  = res_real["equity_curve"]
+    curve_real = res_real["equity_curve"]
     m_paper = metrics_from_curve(curve_paper)
-    m_real  = metrics_from_curve(curve_real)
+    m_real = metrics_from_curve(curve_real)
 
     print(f"\n--- Yearly Returns for {name} (Baseline) ---")
     yr_paper = year_returns_from_curve(curve_paper).apply(fmt_pct)
-    yr_real  = year_returns_from_curve(curve_real).apply(fmt_pct)
-    df_yr = pd.DataFrame({"Paper": yr_paper, "Real": yr_real}); df_yr.index.name = "Year"
-    if not df_yr.empty: print(df_yr.to_string())
+    yr_real = year_returns_from_curve(curve_real).apply(fmt_pct)
+    df_yr = pd.DataFrame({"Paper": yr_paper, "Real": yr_real})
+    df_yr.index.name = "Year"
+    if not df_yr.empty:
+        print(df_yr.to_string())
     print("--------------------------------------\n")
     return (curve_paper, curve_real, (m_paper, m_real))
+
 
 # =========================
 # S&P 500 Buy & Hold Comparison
@@ -1100,12 +1303,15 @@ def run_sp500_benchmark():
         print(f"Could not run S&P 500 OOS/Holdout benchmark: {e}")
     print("================================================\n")
 
+
 # =========================
 # Walk-Forward Validation
 # =========================
-def walk_forward_validation(oos_start, oos_end, train_years, test_years, paper=True, chain_capital=True):
+def walk_forward_validation(
+    oos_start, oos_end, train_years, test_years, paper=True, chain_capital=True
+):
     oos_start = pd.to_datetime(oos_start)
-    oos_end   = pd.to_datetime(oos_end)
+    oos_end = pd.to_datetime(oos_end)
 
     tests = []
     curves_scaled = []
@@ -1114,8 +1320,8 @@ def walk_forward_validation(oos_start, oos_end, train_years, test_years, paper=T
     t0 = oos_start
     while True:
         train_end = t0 + pd.DateOffset(years=train_years) - Day(1)
-        test_start= train_end + Day(1)
-        test_end  = test_start + pd.DateOffset(years=test_years) - Day(1)
+        test_start = train_end + Day(1)
+        test_end = test_start + pd.DateOffset(years=test_years) - Day(1)
         if test_start > oos_end:
             break
         if test_end > oos_end:
@@ -1148,6 +1354,7 @@ def walk_forward_validation(oos_start, oos_end, train_years, test_years, paper=T
     agg_curve = pd.concat(curves_scaled).sort_index()
     return agg_curve, tests
 
+
 # =========================
 # Dashboard frontend
 # =========================
@@ -1156,20 +1363,33 @@ def build_schedule_and_legs(run_idx):
     sched = build_locked_schedule(run_idx)
 
     # Build maps as in sim_strategy for valuation
-    gap_map   = {"TQQQ": gap_TQQQ, "SPXL": gap_SPXL, "QLD": gap_QLD, "SSO": gap_SSO, "GLD": gap_GLD}
-    intra_map = {"TQQQ": intra_TQQQ, "SPXL": intra_SPXL, "QLD": intra_QLD, "SSO": intra_SSO, "GLD": intra_GLD}
+    gap_map = {
+        "TQQQ": gap_TQQQ,
+        "SPXL": gap_SPXL,
+        "QLD": gap_QLD,
+        "SSO": gap_SSO,
+        "GLD": gap_GLD,
+    }
+    intra_map = {
+        "TQQQ": intra_TQQQ,
+        "SPXL": intra_SPXL,
+        "QLD": intra_QLD,
+        "SSO": intra_SSO,
+        "GLD": intra_GLD,
+    }
     if globals().get("HAVE_IEF", False):
-        gap_map["IEF"] = gap_IEF; intra_map["IEF"] = intra_IEF
+        gap_map["IEF"] = gap_IEF
+        intra_map["IEF"] = intra_IEF
     # extras (no proxies)
     extra_syms = sorted(lineup_syms - {"TQQQ", "SPXL", "QLD", "SSO", "GLD", "IEF"})
     for sym in extra_syms:
         try:
             ao_e, ac_e, _ = get_adj_ohlc(px, sym, idx)
             g_e, i_e = seg_returns(ao_e, ac_e)
-            gap_map[sym]   = g_e.fillna(0.0)
+            gap_map[sym] = g_e.fillna(0.0)
             intra_map[sym] = i_e.fillna(0.0)
         except Exception:
-            gap_map[sym]   = pd.Series(0.0, index=idx)
+            gap_map[sym] = pd.Series(0.0, index=idx)
             intra_map[sym] = pd.Series(0.0, index=idx)
 
     legs = []
@@ -1185,24 +1405,29 @@ def build_schedule_and_legs(run_idx):
         nxt = sched.loc[d]
         if nxt != curr:
             # swap at open of d
-            leg_gross *= (1.0 + float(gap_map[curr].get(d, 0.0)))
-            legs.append({
-                "Entry": entry,
-                "Exit": d,
-                "Asset": curr,
-                "Next": nxt,
-                "ReturnPct": leg_gross - 1.0,
-                "Days": (d - entry).days
-            })
+            leg_gross *= 1.0 + float(gap_map[curr].get(d, 0.0))
+            legs.append(
+                {
+                    "Entry": entry,
+                    "Exit": d,
+                    "Asset": curr,
+                    "Next": nxt,
+                    "ReturnPct": leg_gross - 1.0,
+                    "Days": (d - entry).days,
+                }
+            )
             # new leg
             curr = nxt
             entry = d
             leg_gross = 1.0 + float(intra_map[curr].get(d, 0.0))
         else:
             # hold day
-            leg_gross *= (1.0 + float(gap_map[curr].get(d, 0.0))) * (1.0 + float(intra_map[curr].get(d, 0.0)))
+            leg_gross *= (1.0 + float(gap_map[curr].get(d, 0.0))) * (
+                1.0 + float(intra_map[curr].get(d, 0.0))
+            )
 
     return sched, pd.DataFrame(legs)
+
 
 def _find_next_trading_day_with_weekday(from_date, target_weekday):
     """
@@ -1215,13 +1440,19 @@ def _find_next_trading_day_with_weekday(from_date, target_weekday):
         pos += 1
     return idx[pos] if pos < len(idx) else None
 
+
 def weekly_signal_dashboard(window_start="2019-01-01", lookback_legs=12, now_ts=None):
     # Pick "today" on the market calendar (roll back if weekend/holiday)
-    now_ts = pd.Timestamp.now(tz=None) if now_ts is None else pd.Timestamp(now_ts)
-    today = now_ts.normalize()
+    # Use last available trading day if now_ts is beyond available data
+    if now_ts is None:
+        now_ts = pd.Timestamp.now(tz=None)
+    today = pd.Timestamp(now_ts).normalize()
     if today not in idx:
         pos = idx.searchsorted(today, side="right") - 1
-        today = idx[max(0, pos)]
+        today = idx[max(0, pos)] if pos >= 0 else idx[0]
+    # Ensure today is not beyond the last available date
+    if today > idx[-1]:
+        today = idx[-1]
 
     # Build schedule/legs up to today (for context and lock propagation)
     run_idx_hist = idx[(idx >= pd.to_datetime(window_start)) & (idx <= today)]
@@ -1249,9 +1480,13 @@ def weekly_signal_dashboard(window_start="2019-01-01", lookback_legs=12, now_ts=
             pos += 1
 
         if next_thu is not None:
-            print(f"Next Thu decision: {next_thu.date()}  -> Exec: {next_trading_day(next_thu).date()} (open) | Symbol: TBD")
+            print(
+                f"Next Thu decision: {next_thu.date()}  -> Exec: {next_trading_day(next_thu).date()} (open) | Symbol: TBD"
+            )
         if next_fri is not None:
-            print(f"Next Fri decision: {next_fri.date()}  -> Exec: {next_trading_day(next_fri).date()} (open) | Symbol: TBD")
+            print(
+                f"Next Fri decision: {next_fri.date()}  -> Exec: {next_trading_day(next_fri).date()} (open) | Symbol: TBD"
+            )
 
         # Recent completed legs
         if legs_hist is not None and not legs_hist.empty:
@@ -1262,12 +1497,30 @@ def weekly_signal_dashboard(window_start="2019-01-01", lookback_legs=12, now_ts=
             print(legs_tail[cols].to_string(index=False))
         else:
             print("\nNo completed legs in window.")
-        print(f"Has today’s bar? {idx[-1].normalize() == pd.Timestamp.now().normalize()}")
+        print(
+            f"Has today’s bar? {idx[-1].normalize() == pd.Timestamp.now().normalize()}"
+        )
         return
 
     # Decision made today
     anchor = "Thursday" if made_thu else "Friday"
     exec_day = next_trading_day(today)
+
+    if exec_day is None:
+        print("===== Decision/Execution Plan =====")
+        print(f"Decided: YES ({anchor} close {today.date()})")
+        print(f"Entry:   TBD (no next trading day available in data)")
+        print(f"Note: Last available trading day in data: {idx[-1].date()}")
+        print(
+            f"Current holding: {sched_hist.iloc[-1] if not sched_hist.empty else 'n/a'}"
+        )
+        if legs_hist is not None and not legs_hist.empty:
+            legs_tail = legs_hist.tail(lookback_legs).copy()
+            legs_tail["Return%"] = (legs_tail["ReturnPct"] * 100.0).round(2)
+            cols = ["Entry", "Exit", "Asset", "Next", "Days", "Return%"]
+            print("\nRecent completed legs (open->open):")
+            print(legs_tail[cols].to_string(index=False))
+        return
 
     # Build schedule through exec_day to propagate lock state and read the chosen symbol
     run_idx_until_exec = idx[idx <= exec_day]
@@ -1276,12 +1529,20 @@ def weekly_signal_dashboard(window_start="2019-01-01", lookback_legs=12, now_ts=
 
     print("===== Decision/Execution Plan =====")
     print(f"Decided: YES ({anchor} close {today.date()})")
-    print(f"Entry:   {exec_day.date()} (open) | Suggested symbol: {suggested if suggested else 'TBD'}")
+    print(
+        f"Entry:   {exec_day.date()} (open) | Suggested symbol: {suggested if suggested else 'TBD'}"
+    )
     # Earliest next decision/exec window
-    next_decision = _find_next_trading_day_with_weekday(today, 4) if made_thu else _find_next_trading_day_with_weekday(today, 3)
+    next_decision = (
+        _find_next_trading_day_with_weekday(today, 4)
+        if made_thu
+        else _find_next_trading_day_with_weekday(today, 3)
+    )
     next_exec = next_trading_day(next_decision) if next_decision is not None else None
     if next_decision is not None and next_exec is not None:
-        print(f"Decided Exit (earliest): decision {next_decision.date()} (close) -> execution {next_exec.date()} (open)")
+        print(
+            f"Decided Exit (earliest): decision {next_decision.date()} (close) -> execution {next_exec.date()} (open)"
+        )
     else:
         print("Decided Exit (earliest): n/a")
 
@@ -1290,7 +1551,9 @@ def weekly_signal_dashboard(window_start="2019-01-01", lookback_legs=12, now_ts=
     if not fridays_hist.empty:
         applied = sched_hist.reindex(fridays_hist).dropna()
         if not applied.empty:
-            print(f"\nWeek summary (from Friday open {applied.index[-1].date()}): Target was {applied.iloc[-1]}")
+            print(
+                f"\nWeek summary (from Friday open {applied.index[-1].date()}): Target was {applied.iloc[-1]}"
+            )
 
     if legs_hist is not None and not legs_hist.empty:
         legs_tail = legs_hist.tail(12).copy()
@@ -1302,63 +1565,15 @@ def weekly_signal_dashboard(window_start="2019-01-01", lookback_legs=12, now_ts=
         print("\nNo completed legs in window.")
 
     print(f"\nHas today’s bar? {idx[-1].normalize() == pd.Timestamp.now().normalize()}")
-    print("\nRepainting: NO (decisions fixed at Thu/Fri close; execution next trading day).")
+    print(
+        "\nRepainting: NO (decisions fixed at Thu/Fri close; execution next trading day)."
+    )
     print("Lagging: 1 business day by design (Thu→Fri and Fri→Mon).")
     print("==============================================\n")
 
+
 # =========================
-# EXECUTION LOGIC
+# EXECUTION LOGIC - DASHBOARD ONLY
 # =========================
-if not DO_WALK_FORWARD:
-    # 1) Pure baseline on HOLDOUT (dual-day)
-    print("\n===== Baseline Strategy (2-State, dual-day: Thu->Fri and Fri->Mon) =====")
-    bp, br, bm = run_pure_baseline_segment("Holdout (Baseline)", HOLDOUT[0], HOLDOUT[1])
-    if bm:
-        print_metrics("Baseline Holdout (Paper)", bm[0])
-        print_metrics("Baseline Holdout (Real)",  bm[1])
-
-    # 2) S&P 500 B&H for reference
-    run_sp500_benchmark()
-
-    # Flip weekday sanity check: should be mostly Friday and Monday
-    rebuild_regime()
-    run_idx_chk = build_run_index("2018-01-01", None)
-    sig_chk = regime_intraday_all.reindex(run_idx_chk)
-    flips = sig_chk[sig_chk.ne(sig_chk.shift(1))].index
-    print("\nFlip weekday counts (expect mostly Friday and Monday):")
-    print(pd.Series(flips.day_name()).value_counts())
-
-    # 3) New 3-state strategy on same window (dual-day)
-    print(f"\n===== NEW STRATEGY (3-state dual-day on {SIGNAL_SYMBOL}, SMA {SMA_SLOW}/{SMA_MID}) =====")
-    print(f"Up-Window: {MID_UP_WINDOW_WEEKS_BENIGN}w (benign) / {MID_UP_WINDOW_WEEKS_STRESSED}w (stressed)")
-    print(f"Slope Filter: {USE_SLOPE_FILTER} ({SLOPE_LOOKBACK_W}w), Dual Risk-Off: {USE_DUAL_RISK_OFF} ({RISK_OFF_LOOKBACK_D}d)")
-    print(f"Dist. Gate: {USE_DIST_GATE_200} ({DELTA_200_PCT*100:.1f}%), Adaptive: {USE_ADAPTIVE_DIST}, Vol Cap: {USE_VOL_CAP}, DD Throttle: {USE_DD_THROTTLE}")
-    print(f"Wash Sale Lockout (Nasdaq family): {LOCKOUT_DAYS} days\n")
-
-    cp_hold, cr_hold, m_hold = run_segment("Holdout", HOLDOUT[0], HOLDOUT[1])
-    if m_hold:
-        print_metrics("Holdout (Paper)", m_hold[0])
-        print_metrics("Holdout (Paper)", m_hold[0])
-        print_metrics("Holdout (Real)",  m_hold[1])
-
-    # 4) Dashboard-style summary (intended for Thu/Fri after-hours)
-    weekly_signal_dashboard(window_start="2019-01-01", lookback_legs=20)
-
-else:
-    wf_curve, wf_tests = walk_forward_validation(
-        WF_START_DATE, WF_END_DATE,
-        WF_TRAIN_YEARS, WF_TEST_YEARS,
-        paper=WF_USE_PAPER,
-        chain_capital=WF_CHAIN_CAPITAL
-    )
-    if wf_curve is not None and not wf_curve.empty:
-        m_wf = metrics_from_curve(wf_curve)
-        simMode = "Paper (No Taxes/Fees)" if WF_USE_PAPER else "Real (With Taxes/Fees)"
-        print(f"===== Walk-Forward Validation ({simMode}, chained, {WF_START_DATE} to {WF_END_DATE}) =====")
-        for (ts, te, m, _) in wf_tests:
-            print_metrics(f"Test window {ts} → {te}", m)
-        print_metrics("Aggregated WF tests (chained)", m_wf)
-    else:
-        print(f"===== Walk-Forward Validation ({WF_START_DATE} to {WF_END_DATE}) =====")
-        print("No data available for this period or configuration.")
-        print(f"Check SMA warm-up and if WF_TRAIN_YEARS ({WF_TRAIN_YEARS}) is too long for the period.")
+# Run only the dashboard (skip backtests)
+weekly_signal_dashboard(window_start="2019-01-01", lookback_legs=30)

@@ -9,6 +9,7 @@ import pandas as pd, numpy as np, yfinance as yf
 from pandas.tseries.offsets import BDay, Day
 from collections import defaultdict
 import math
+from TOS_LR_Channels_Calc_v2 import compute_std_lines_strict, N as LRC_N, STDEV_PERIOD as LRC_STDEV, PRICE_SRC as LRC_PRICE_SRC
 
 try:
     from pandas_datareader import data as pdr
@@ -65,14 +66,6 @@ USE_DD_THROTTLE   = True
 DD_LOOKBACK_D     = 252
 DD_TH_2X          = 0.20
 
-# Volatility-targeted sizing (Sprint 1)
-USE_VOL_TARGETING = True
-TARGET_VOL_ANNUAL = 0.30   # sigma* = 30% annualized
-VT_LOOKBACK_D     = 20      # realized vol lookback (trading days)
-ALPHA_MIN         = 0.40    # minimum sizing factor
-ALPHA_MAX         = 1.20    # maximum sizing factor
-ALPHA_UPDATE_THRESH = 0.10  # only update if |alpha_t - alpha_{t-1}| > this
-
 # Risk-off (GLD vs IEF momentum)
 USE_DUAL_RISK_OFF   = False   # GLD only by default
 RISK_OFF_LOOKBACK_D = 63
@@ -111,10 +104,22 @@ LOCKOUT_DAYS = 30
 # Preferred gold proxy source (for pre-inception)
 USE_LBMA_SPOT = True
 
+# =========================
+# LR Overlay (Mobius) Config
+# =========================
+ENABLE_LRC_OVERLAY       = True   # Tactical TQQQ hedging with SPY filter + TQQQ channels
+LRC_APPLY_IN_STATES      = {2}             # Only 3x (UB3→UB2 hedging), disable 0x LB3 re-risk
+LRC_REQUIRE_S200_POS     = True            # Slope gate must be ON
+LRC_BACKBONE_FOR_RISK_OFF= "nasdaq"        # which equity backbone drives LB3 in 0x: "nasdaq" or "spx"
+LRC_USE_INVERSE_IN_3X    = True            # in 3x, fade UB3 via inverse; else go GLD
+LRC_N                    = 252             # regression window
+LRC_STDEV                = 12              # stdev period
+LRC_PRICE_SRC            = "close"         # "hl2" or "close" - using close to match TOS
+
 # ============ Dashboard lineups (availability fallback only) ============
 # Only used if the original choice has no data that day. Original order/lockout preserved.
-RISK_ON_3X_LINEUP    = ["TQQQ", "SPXL", "UPRO", "UDOW", "TECL", "SOXL", "TNA", "FNGU"]
-RISK_ON_2X_LINEUP    = ["QLD",  "SSO",  "SPUU", "DDM",  "UWM",  "ROM"]
+RISK_ON_3X_LINEUP    = ["TQQQ", "SPXL", "UPRO", "UDOW", "TECL", "SOXL", "TNA", "FNGU", "SQQQ", "SPXU"]
+RISK_ON_2X_LINEUP    = ["QLD",  "SSO",  "SPUU", "DDM",  "UWM",  "ROM",  "QID",  "SDS"]
 RISK_OFF_GOLD_LINEUP = ["GLD", "IAU", "GLDM", "SGOL", "BAR", "AAAU"]
 RISK_OFF_BOND_LINEUP = ["IEF", "VGIT", "GOVT", "SCHR", "IEI", "SHY", "TLH"]
 lineup_syms = set(RISK_ON_3X_LINEUP + RISK_ON_2X_LINEUP + RISK_OFF_GOLD_LINEUP + RISK_OFF_BOND_LINEUP)
@@ -191,8 +196,9 @@ def next_trading_day(date_like):
 if DATA_END is None:
     DATA_END = (pd.Timestamp.today() + BDay(1)).date().isoformat()
 
+# Ensure QQQ is included so overlay can use it instead of ^NDX
 tickers = sorted(set(
-    [SIGNAL_SYMBOL, "^GSPC", "^NDX", "SPY", "GC=F"] + list(lineup_syms)
+    [SIGNAL_SYMBOL, "^GSPC", "^NDX", "SPY", "QQQ", "GC=F"] + list(lineup_syms)
 ))
 dl_lookback = max(SMA_SLOW, SMA_MID, DD_LOOKBACK_D, RISK_OFF_LOOKBACK_D) + 10
 dl_start = (pd.to_datetime(DATA_START) - BDay(dl_lookback)).date().isoformat()
@@ -205,6 +211,18 @@ if SIGNAL_SYMBOL not in px["Adj Close"].columns or px["Adj Close"][SIGNAL_SYMBOL
 
 ref_ac = px["Adj Close"][SIGNAL_SYMBOL].dropna()
 idx = ref_ac.index
+
+# Daily SMA200 slope gate (shifted for next-open execution)
+def build_slope200_ok_daily():
+    s200 = ref_ac.rolling(SMA_SLOW, min_periods=SMA_SLOW).mean()
+    look = SLOPE_LOOKBACK_W * 5
+    s200_ok = (s200 - s200.shift(look)) > 0
+    return s200_ok.shift(1).reindex(idx).fillna(False)
+
+slope200_ok = build_slope200_ok_daily()
+
+# Overlay event log for diagnostics
+overlay_events = []
 
 # Build adjusted open and adjusted close for symbols
 def get_adj_ohlc(px, sym, idx):
@@ -230,6 +248,116 @@ qld_ao,  qld_ac,  qld_cl   = get_adj_ohlc(px, "QLD",  idx)
 sso_ao,  sso_ac,  sso_cl   = get_adj_ohlc(px, "SSO",  idx)
 ief_ao,  ief_ac,  ief_cl   = get_adj_ohlc(px, "IEF",  idx)
 gspc_ac = px["Adj Close"]["^GSPC"].reindex(idx)
+
+# =========================
+# Backbone families and inverse helpers
+# =========================
+def family_of(sym: str) -> str:
+    if sym in {"TQQQ","QLD","QQQ","SQQQ","QID"}: return "nasdaq"
+    if sym in {"SPXL","SSO","SPY","SPXU","SDS"}: return "spx"
+    return "riskoff"
+
+def inverse_for(sym: str):
+    if sym in {"TQQQ","QLD","QQQ"}:
+        return "SQQQ" if sym in {"TQQQ","QQQ"} else "QID"
+    if sym in {"SPXL","SSO","SPY"}:
+        return "SPXU" if sym in {"SPXL","SPY"} else "SDS"
+    return None
+
+# =========================
+# Build LR channels for backbones (strict rolling, no lookahead)
+# =========================
+def build_std_lines_backbone(sym: str) -> pd.DataFrame:
+    try:
+        df = pd.DataFrame({
+            "open": px["Open"][sym].reindex(idx),
+            "high": px["High"][sym].reindex(idx),
+            "low":  px["Low"][sym].reindex(idx),
+            "close":px["Close"][sym].reindex(idx),
+        }).dropna()
+        std = compute_std_lines_strict(df, n=LRC_N, stdev_len=LRC_STDEV, price_src=LRC_PRICE_SRC)
+        return std.reindex(idx)
+    except Exception:
+        return pd.DataFrame(index=idx)
+
+# Use QQQ for overlay (with ^NDX fallback if QQQ unavailable)
+try:
+    if "QQQ" in px["Close"].columns and px["Close"]["QQQ"].notna().sum() > 252:
+        std_ndx = build_std_lines_backbone("QQQ")
+    else:
+        std_ndx = build_std_lines_backbone("^NDX")
+except:
+    std_ndx = build_std_lines_backbone("^NDX")
+
+std_spy = build_std_lines_backbone("SPY")
+
+def make_touch_masks(std_df: pd.DataFrame):
+    if std_df is None or std_df.empty: 
+        return (pd.Series(False, index=idx), pd.Series(False, index=idx), pd.Series(False, index=idx))
+    d = std_df.dropna(subset=["high","low","close","UB1","UB2","UB3","LB1","LB2","LB3"]).copy()
+    out_idx = d.index
+    ub3_prev = ((d["high"] >= d["UB3"]) | (d["close"] >= d["UB3"])).shift(1).fillna(False)
+    ub2_rev  = (d["close"] <= d["UB2"]).fillna(False)
+    lb3_prev = ((d["low"]  <= d["LB3"]) | (d["close"] <= d["LB3"])).shift(1).fillna(False)
+    # reindex to full idx
+    return (ub3_prev.reindex(idx).fillna(False),
+            ub2_rev.reindex(idx).fillna(False),
+            lb3_prev.reindex(idx).fillna(False))
+
+ub3_prev_ndx, ub2_rev_ndx, lb3_prev_ndx = make_touch_masks(std_ndx)
+ub3_prev_spy, ub2_rev_spy, lb3_prev_spy = make_touch_masks(std_spy)
+
+# Close-only signals for overlay (match standalone strategy logic)
+def make_close_signals(std_df: pd.DataFrame):
+    """Close above UB3 (prev day) for entry, Close <= UB2 for exit"""
+    if std_df is None or std_df.empty:
+        return (pd.Series(False, index=idx), pd.Series(False, index=idx))
+    d = std_df.dropna(subset=["close","UB2","UB3"]).copy()
+    ub3_close_prev = (d["close"] >= d["UB3"]).shift(1).fillna(False)
+    ub2_close_exit = (d["close"] <= d["UB2"]).fillna(False)
+    return (ub3_close_prev.reindex(idx).fillna(False),
+            ub2_close_exit.reindex(idx).fillna(False))
+
+ub3_close_ndx, ub2_close_exit_ndx = make_close_signals(std_ndx)
+ub3_close_spy, ub2_close_exit_spy = make_close_signals(std_spy)
+
+# LB2 reversion (close >= LB2) for LB3→LB2 exits
+def make_lb2_revert(std_df: pd.DataFrame):
+    if std_df is None or std_df.empty:
+        return pd.Series(False, index=idx)
+    d = std_df.dropna(subset=["close","LB2"]).copy()
+    lb2_rev = (d["close"] >= d["LB2"]).fillna(False)
+    return lb2_rev.reindex(idx).fillna(False)
+
+lb2_rev_ndx = make_lb2_revert(std_ndx)
+lb2_rev_spy = make_lb2_revert(std_spy)
+
+# =========================
+# Overlay gating
+# =========================
+def overlay_allowed(d: pd.Timestamp, regime: int) -> bool:
+    if not ENABLE_LRC_OVERLAY:
+        return False
+    if regime not in LRC_APPLY_IN_STATES:
+        return False
+    if LRC_REQUIRE_S200_POS and not bool(slope200_ok.get(d, False)):
+        return False
+    return True
+
+def spy_filter_active(d: pd.Timestamp) -> bool:
+    """Check if SPY is between Midline and UB2 (filter for TQQQ hedge entry)"""
+    if std_spy.empty:
+        return False
+    try:
+        row = std_spy.loc[d]
+        close = float(row.get("close", np.nan))
+        mid = float(row.get("mid", np.nan))
+        ub2 = float(row.get("UB2", np.nan))
+        if np.isnan(close) or np.isnan(mid) or np.isnan(ub2):
+            return False
+        return mid <= close <= ub2
+    except (KeyError, ValueError):
+        return False
 
 # Dividends
 def get_div_series(sym, idx):
@@ -706,6 +834,11 @@ def build_locked_schedule(run_idx):
     curr_asset = None
     entry_date = None
     leg_gross = 1.0
+    # Overlay state
+    overlay_on = False
+    overlay_family = None
+    overlay_mode = None  # "ub3_fade" or "lb3_rerisk"
+    overlay_start_date = None
 
     for i, d in enumerate(run_idx):
         regime = int(regime_intraday.get(d, 0))
@@ -718,20 +851,193 @@ def build_locked_schedule(run_idx):
             sched.iloc[i] = curr_asset
             continue
 
+        # Compute base asset selection on swap days; otherwise base defaults to current asset
         if d in swap_set:
             leg_gross *= (1.0 + gap_map[curr_asset].get(d, 0.0))
-            if (curr_asset in {"TQQQ", "QLD"}) and (leg_gross - 1.0 < 0.0):
+            # Family-wide lockout for Nasdaq legs (long or inverse) on realized loss
+            if (family_of(curr_asset) == "nasdaq") and (leg_gross - 1.0 < 0.0):
                 lockout_until = d + Day(LOCKOUT_DAYS)
 
             base = choose_asset(regime, d, lockout_until)
             next_asset = pick_available_from_lineup(base, regime, d, lockout_until)
+
+            # Overlay sequencing on swap day
+            fam = family_of(next_asset)
+            # Select backbone masks
+            if fam == "nasdaq":
+                ub3_prev, ub2_rev, lb3_prev, lb2_rev = ub3_prev_ndx, ub2_rev_ndx, lb3_prev_ndx, lb2_rev_ndx
+            elif fam == "spx":
+                ub3_prev, ub2_rev, lb3_prev, lb2_rev = ub3_prev_spy, ub2_rev_spy, lb3_prev_spy, lb2_rev_spy
+            else:
+                if LRC_BACKBONE_FOR_RISK_OFF == "nasdaq":
+                    ub3_prev, ub2_rev, lb3_prev, lb2_rev = ub3_prev_ndx, ub2_rev_ndx, lb3_prev_ndx, lb2_rev_ndx
+                else:
+                    ub3_prev, ub2_rev, lb3_prev, lb2_rev = ub3_prev_spy, ub2_rev_spy, lb3_prev_spy, lb2_rev_spy
+
+            # 1) Exit overlay on reversion or gating off
+            if overlay_on and (
+                (overlay_mode == "ub3_fade" and bool(ub2_close_exit_ndx.get(d, False))) or
+                (overlay_mode == "lb3_rerisk" and bool(lb2_rev.get(d, False)))
+            ):
+                # Log overlay exit
+                try:
+                    if overlay_mode == "ub3_fade" and bool(ub2_close_exit_ndx.get(d, False)):
+                        exit_reason = "UB2"
+                    elif overlay_mode == "lb3_rerisk" and bool(lb2_rev.get(d, False)):
+                        exit_reason = "LB2"
+                    elif regime not in LRC_APPLY_IN_STATES:
+                        exit_reason = "regime_exit"
+                    elif (LRC_REQUIRE_S200_POS and not bool(slope200_ok.get(d, False))):
+                        exit_reason = "slope_off"
+                    else:
+                        exit_reason = "other"
+                    if overlay_start_date is not None:
+                        overlay_events.append({
+                            "mode": overlay_mode,
+                            "family": overlay_family,
+                            "start": overlay_start_date,
+                            "end": d,
+                            "days": (d - overlay_start_date).days,
+                            "exit_reason": exit_reason
+                        })
+                except Exception:
+                    pass
+                # After LB3→LB2 or UB3→UB2 exit, always revert to base schedule
+                next_asset = pick_available_from_lineup(base, regime, d, lockout_until)
+                overlay_on = False
+                overlay_family = None
+                overlay_mode = None
+                overlay_start_date = None
+            # 2) 3x UB3 fade (state=2) - ONLY for TQQQ with SPY filter
+            elif (not overlay_on) and regime == 2 and overlay_allowed(d, regime):
+                # Only hedge TQQQ when SPY filter is active and ^NDX closed above UB3
+                if next_asset == "TQQQ" and spy_filter_active(d) and bool(ub3_close_ndx.get(d, False)):
+                    if LRC_USE_INVERSE_IN_3X:
+                        inv = inverse_for(next_asset)
+                        if inv and has_data(inv, d):
+                            next_asset = inv
+                            overlay_on = True
+                            overlay_family = fam
+                            overlay_mode = "ub3_fade"
+                            overlay_start_date = d
+                        else:
+                            next_asset = "GLD"
+                    else:
+                        next_asset = "GLD"
+                        overlay_on = True
+                        overlay_family = fam
+                        overlay_mode = "ub3_fade"
+                        overlay_start_date = d
+            # 3) 0x LB3 early re-risk (state=0)
+            elif (not overlay_on) and regime == 0 and overlay_allowed(d, regime):
+                # Choose backbone for LB3 in 0x per config
+                use_lb3 = lb3_prev_ndx if LRC_BACKBONE_FOR_RISK_OFF == "nasdaq" else lb3_prev_spy
+                if bool(use_lb3.get(d, False)):
+                    desired = choose_asset(2, d, lockout_until)  # prefer 3x
+                    next_asset = pick_available_from_lineup(desired, 2, d, lockout_until)
+                    overlay_on = True
+                    overlay_family = family_of(next_asset)
+                    overlay_mode = "lb3_rerisk"
+                    overlay_start_date = d
 
             curr_asset = next_asset
             entry_date = d
             leg_gross = 1.0 + intra_map[curr_asset].get(d, 0.0)
             sched.iloc[i] = curr_asset
         else:
-            leg_gross *= (1.0 + gap_map[curr_asset].get(d, 0.0)) * (1.0 + intra_map[curr_asset].get(d, 0.0))
+            # Non-swap day: allow overlay flips at open
+            base = curr_asset
+            next_asset = curr_asset
+
+            fam = family_of(base)
+            if fam == "nasdaq":
+                ub3_prev, ub2_rev, lb3_prev, lb2_rev = ub3_prev_ndx, ub2_rev_ndx, lb3_prev_ndx, lb2_rev_ndx
+            elif fam == "spx":
+                ub3_prev, ub2_rev, lb3_prev, lb2_rev = ub3_prev_spy, ub2_rev_spy, lb3_prev_spy, lb2_rev_spy
+            else:
+                if LRC_BACKBONE_FOR_RISK_OFF == "nasdaq":
+                    ub3_prev, ub2_rev, lb3_prev, lb2_rev = ub3_prev_ndx, ub2_rev_ndx, lb3_prev_ndx, lb2_rev_ndx
+                else:
+                    ub3_prev, ub2_rev, lb3_prev, lb2_rev = ub3_prev_spy, ub2_rev_spy, lb3_prev_spy, lb2_rev_spy
+
+            # 1) Exit overlay on reversion or gating off
+            if overlay_on and (
+                (overlay_mode == "ub3_fade" and bool(ub2_close_exit_ndx.get(d, False))) or
+                (overlay_mode == "lb3_rerisk" and bool(lb2_rev.get(d, False)))
+            ):
+                # Log overlay exit
+                try:
+                    if overlay_mode == "ub3_fade" and bool(ub2_close_exit_ndx.get(d, False)):
+                        exit_reason = "UB2"
+                    elif overlay_mode == "lb3_rerisk" and bool(lb2_rev.get(d, False)):
+                        exit_reason = "LB2"
+                    elif regime not in LRC_APPLY_IN_STATES:
+                        exit_reason = "regime_exit"
+                    elif (LRC_REQUIRE_S200_POS and not bool(slope200_ok.get(d, False))):
+                        exit_reason = "slope_off"
+                    else:
+                        exit_reason = "other"
+                    if overlay_start_date is not None:
+                        overlay_events.append({
+                            "mode": overlay_mode,
+                            "family": overlay_family,
+                            "start": overlay_start_date,
+                            "end": d,
+                            "days": (d - overlay_start_date).days,
+                            "exit_reason": exit_reason
+                        })
+                except Exception:
+                    pass
+                # After LB3→LB2 or UB3→UB2 exit, always revert to base schedule
+                next_asset = base
+                overlay_on = False
+                overlay_family = None
+                overlay_mode = None
+                overlay_start_date = None
+            # 2) 3x UB3 fade (state=2) - ONLY for TQQQ with SPY filter
+            elif (not overlay_on) and regime == 2 and overlay_allowed(d, regime):
+                # Only hedge TQQQ when SPY filter is active and ^NDX closed above UB3
+                if base == "TQQQ" and spy_filter_active(d) and bool(ub3_close_ndx.get(d, False)):
+                    if LRC_USE_INVERSE_IN_3X:
+                        inv = inverse_for(base)
+                        if inv and has_data(inv, d):
+                            next_asset = inv
+                            overlay_on = True
+                            overlay_family = fam
+                            overlay_mode = "ub3_fade"
+                            overlay_start_date = d
+                        else:
+                            next_asset = "GLD"
+                            overlay_on = True
+                            overlay_family = fam
+                            overlay_mode = "ub3_fade"
+                            overlay_start_date = d
+                    else:
+                        next_asset = "GLD"
+                        overlay_on = True
+                        overlay_family = fam
+                        overlay_mode = "ub3_fade"
+                        overlay_start_date = d
+            # 3) 0x LB3 early re-risk (state=0)
+            elif (not overlay_on) and regime == 0 and overlay_allowed(d, regime):
+                use_lb3 = lb3_prev_ndx if LRC_BACKBONE_FOR_RISK_OFF == "nasdaq" else lb3_prev_spy
+                if bool(use_lb3.get(d, False)):
+                    desired = choose_asset(2, d, lockout_until)  # prefer 3x
+                    next_asset = pick_available_from_lineup(desired, 2, d, lockout_until)
+                    overlay_on = True
+                    overlay_family = family_of(next_asset)
+                    overlay_mode = "lb3_rerisk"
+                    overlay_start_date = d
+
+            # Apply returns for the day with potential open swap
+            if next_asset != curr_asset:
+                # apply gap on existing, then switch at open
+                leg_gross *= (1.0 + gap_map[curr_asset].get(d, 0.0))
+                curr_asset = next_asset
+                entry_date = d
+                leg_gross = 1.0 + intra_map[curr_asset].get(d, 0.0)
+            else:
+                leg_gross *= (1.0 + gap_map[curr_asset].get(d, 0.0)) * (1.0 + intra_map[curr_asset].get(d, 0.0))
             sched.iloc[i] = curr_asset
 
     return sched
@@ -1262,7 +1568,7 @@ def weekly_signal_dashboard(window_start="2019-01-01", lookback_legs=12, now_ts=
             print(legs_tail[cols].to_string(index=False))
         else:
             print("\nNo completed legs in window.")
-        print(f"Has today’s bar? {idx[-1].normalize() == pd.Timestamp.now().normalize()}")
+        print(f"Has today's bar? {idx[-1].normalize() == pd.Timestamp.now().normalize()}")
         return
 
     # Decision made today
@@ -1270,6 +1576,12 @@ def weekly_signal_dashboard(window_start="2019-01-01", lookback_legs=12, now_ts=
     exec_day = next_trading_day(today)
 
     # Build schedule through exec_day to propagate lock state and read the chosen symbol
+    if exec_day is None:
+        print("===== Decision/Execution Plan =====")
+        print(f"Decided: YES ({anchor} close {today.date()})")
+        print("Entry:   n/a (no next trading day found in data window)")
+        print("Decided Exit (earliest): n/a")
+        return
     run_idx_until_exec = idx[idx <= exec_day]
     sched_upto, _ = build_schedule_and_legs(run_idx_until_exec)
     suggested = sched_upto.loc[exec_day] if exec_day in sched_upto.index else None
@@ -1301,7 +1613,7 @@ def weekly_signal_dashboard(window_start="2019-01-01", lookback_legs=12, now_ts=
     else:
         print("\nNo completed legs in window.")
 
-    print(f"\nHas today’s bar? {idx[-1].normalize() == pd.Timestamp.now().normalize()}")
+    print(f"\nHas today's bar? {idx[-1].normalize() == pd.Timestamp.now().normalize()}")
     print("\nRepainting: NO (decisions fixed at Thu/Fri close; execution next trading day).")
     print("Lagging: 1 business day by design (Thu→Fri and Fri→Mon).")
     print("==============================================\n")
@@ -1340,6 +1652,88 @@ if not DO_WALK_FORWARD:
         print_metrics("Holdout (Paper)", m_hold[0])
         print_metrics("Holdout (Paper)", m_hold[0])
         print_metrics("Holdout (Real)",  m_hold[1])
+
+    # Overlay diagnostics summary
+    if overlay_events:
+        ev = pd.DataFrame(overlay_events)
+        total = len(ev)
+        ub3_n = int((ev["mode"] == "ub3_fade").sum())
+        lb3_n = int((ev["mode"] == "lb3_rerisk").sum())
+        avg_days = ev["days"].mean() if "days" in ev else float("nan")
+        print("\n===== LR Overlay Summary (Holdout) =====")
+        print(f"Total Overlays: {total}  |  UB3→UB2 fades: {ub3_n}  |  LB3→Mid re-risk: {lb3_n}")
+        if not np.isnan(avg_days):
+            print(f"Average Overlay Duration: {avg_days:.1f} days")
+        exit_counts = ev["exit_reason"].value_counts(dropna=False)
+        if not exit_counts.empty:
+            print("Exit reasons:")
+            for k, v in exit_counts.items():
+                print(f"  {k}: {v}")
+        
+        # Show last 3 UB3 fade trades for verification
+        ub3_trades = ev[ev["mode"] == "ub3_fade"].tail(3)
+        if not ub3_trades.empty:
+            print("\nLast 3 UB3→UB2 trades (for ThinkorSwim verification):")
+            for _, t in ub3_trades.iterrows():
+                signal_date = t["start"] - pd.Timedelta(days=1)  # Entry is next day, so signal was prev
+                print(f"\n  Trade: Signal {signal_date.date()} → Entry {t['start'].date()} → Exit {t['end'].date()} ({t['days']} days)")
+                
+                # Show QQQ/^NDX channel values on signal date
+                if signal_date in std_ndx.index:
+                    row = std_ndx.loc[signal_date]
+                    nasdaq_ticker = "QQQ" if "QQQ" in px["Close"].columns else "^NDX"
+                    print(f"    {nasdaq_ticker} on {signal_date.date()}:")
+                    print(f"      Close: {row['close']:.2f}")
+                    print(f"      Mid:   {row['mid']:.2f}")
+                    print(f"      UB1:   {row['UB1']:.2f}")
+                    print(f"      UB2:   {row['UB2']:.2f}")
+                    print(f"      UB3:   {row['UB3']:.2f}  ← Entry trigger")
+                    print(f"      LB1:   {row['LB1']:.2f}")
+                    print(f"      LB2:   {row['LB2']:.2f}")
+                    print(f"      LB3:   {row['LB3']:.2f}")
+                    print(f"      Close >= UB3? {row['close']:.2f} >= {row['UB3']:.2f} = {row['close'] >= row['UB3']}")
+                
+                # Show SPY filter on signal date
+                if signal_date in std_spy.index:
+                    spy_row = std_spy.loc[signal_date]
+                    print(f"    SPY Filter on {signal_date.date()}:")
+                    print(f"      Close: {spy_row['close']:.2f}  |  Mid: {spy_row['mid']:.2f}  |  UB2: {spy_row['UB2']:.2f}")
+                    spy_ok = (spy_row['mid'] <= spy_row['close'] <= spy_row['UB2'])
+                    print(f"      Filter OK? {spy_row['mid']:.2f} <= {spy_row['close']:.2f} <= {spy_row['UB2']:.2f} = {spy_ok}")
+                
+                # Entry/Exit open prices and PnL (short QQQ proxy)
+                try:
+                    base_ticker = "QQQ" if "QQQ" in px["Open"].columns else ("^NDX" if "^NDX" in px["Open"].columns else None)
+                    if base_ticker is not None:
+                        ent_o = float(px["Open"][base_ticker].get(t['start'], float('nan')))
+                        ex_o  = float(px["Open"][base_ticker].get(t['end'], float('nan')))
+                        if not (pd.isna(ent_o) or pd.isna(ex_o)):
+                            short_ret = (ent_o / ex_o - 1.0) * 100.0
+                            print(f"    Entry Open ({base_ticker}): {t['start'].date()}  {ent_o:.2f}")
+                            print(f"    Exit  Open ({base_ticker}): {t['end'].date()}    {ex_o:.2f}")
+                            print(f"    Short Return: {short_ret:.2f}%")
+                except Exception:
+                    pass
+        print("========================================\n")
+
+        # Full trade list (entry/exit open and PnL)
+        try:
+            ub3_all = ev[ev["mode"] == "ub3_fade"].copy()
+            if not ub3_all.empty:
+                base_ticker = "QQQ" if "QQQ" in px["Open"].columns else ("^NDX" if "^NDX" in px["Open"].columns else None)
+                print("All UB3→UB2 overlay trades (entry/exit open, short PnL):")
+                print(f"Ticker used for PnL: {base_ticker}")
+                print("  Signal       Entry        Exit        Days   EntryOpen   ExitOpen   ShortPnL%")
+                for _, t in ub3_all.iterrows():
+                    signal_date = (t["start"] - pd.Timedelta(days=1)).date()
+                    ent = t["start"]; ex = t["end"]; days = int(t.get("days", 0))
+                    ent_o = float(px["Open"][base_ticker].get(ent, float('nan'))) if base_ticker else float('nan')
+                    ex_o  = float(px["Open"][base_ticker].get(ex, float('nan'))) if base_ticker else float('nan')
+                    pnl = (ent_o / ex_o - 1.0) * 100.0 if (not pd.isna(ent_o) and not pd.isna(ex_o) and ex_o != 0.0) else float('nan')
+                    print(f"  {signal_date}  {ent.date()}  {ex.date()}  {days:5d}   {ent_o:10.2f}  {ex_o:9.2f}   {pnl:9.2f}")
+                print()
+        except Exception:
+            pass
 
     # 4) Dashboard-style summary (intended for Thu/Fri after-hours)
     weekly_signal_dashboard(window_start="2019-01-01", lookback_legs=20)

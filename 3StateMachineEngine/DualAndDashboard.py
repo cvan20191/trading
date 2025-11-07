@@ -71,6 +71,10 @@ USE_DD_THROTTLE   = True
 DD_LOOKBACK_D     = 252
 DD_TH_2X          = 0.20
 
+# Tripwire demotion (Sprint 2)
+USE_TRIPWIRE      = False  # Enable/disable tripwire demotion
+TRIPWIRE_COOLDOWN_DAYS = 5  # Business days to stay in state 0 after tripwire triggers
+
 # Risk-off (GLD vs IEF momentum)
 USE_DUAL_RISK_OFF   = False   # GLD only by default
 RISK_OFF_LOOKBACK_D = 63
@@ -193,8 +197,10 @@ print("Starting data download...", flush=True)
 if DATA_END is None:
     DATA_END = (pd.Timestamp.today() + BDay(1)).date().isoformat()
 
+# Tripwire symbols: VIX, VIX3M (fallback to ^VXV), HYG, LQD, RSP, SPY
+tripwire_syms = ["^VIX", "VIX3M", "^VXV", "HYG", "LQD", "RSP", "SPY"]
 tickers = sorted(set(
-    [SIGNAL_SYMBOL, "^GSPC", "^NDX", "SPY", "GC=F"] + list(lineup_syms)
+    [SIGNAL_SYMBOL, "^GSPC", "^NDX", "SPY", "GC=F"] + list(lineup_syms) + tripwire_syms
 ))
 dl_lookback = max(SMA_SLOW, SMA_MID, DD_LOOKBACK_D, RISK_OFF_LOOKBACK_D) + 10
 dl_start = (pd.to_datetime(DATA_START) - BDay(dl_lookback)).date().isoformat()
@@ -234,6 +240,17 @@ spxl_ao, spxl_ac, spxl_cl  = get_adj_ohlc(px, "SPXL", idx)
 qld_ao,  qld_ac,  qld_cl   = get_adj_ohlc(px, "QLD",  idx)
 sso_ao,  sso_ac,  sso_cl   = get_adj_ohlc(px, "SSO",  idx)
 ief_ao,  ief_ac,  ief_cl   = get_adj_ohlc(px, "IEF",  idx)
+
+# Tripwire data
+vix_ac = px["Adj Close"]["^VIX"].reindex(idx) if "^VIX" in px["Adj Close"].columns else pd.Series(index=idx, dtype=float)
+# Try VIX3M first, fallback to ^VXV (both are 3M implied vol)
+vix3m_ac = px["Adj Close"]["VIX3M"].reindex(idx) if "VIX3M" in px["Adj Close"].columns else pd.Series(index=idx, dtype=float)
+vxv_ac = px["Adj Close"]["^VXV"].reindex(idx) if "^VXV" in px["Adj Close"].columns else pd.Series(index=idx, dtype=float)
+# Use VIX3M if available, otherwise fallback to ^VXV
+vix3m_fallback_ac = vix3m_ac if vix3m_ac.notna().sum() > vxv_ac.notna().sum() else vxv_ac
+hyg_ac = px["Adj Close"]["HYG"].reindex(idx) if "HYG" in px["Adj Close"].columns else pd.Series(index=idx, dtype=float)
+lqd_ac = px["Adj Close"]["LQD"].reindex(idx) if "LQD" in px["Adj Close"].columns else pd.Series(index=idx, dtype=float)
+rsp_ac = px["Adj Close"]["RSP"].reindex(idx) if "RSP" in px["Adj Close"].columns else pd.Series(index=idx, dtype=float)
 
 # Dividends
 def get_div_series(sym, idx):
@@ -483,6 +500,70 @@ prox_mask_SSO  = prox_mask_SSO.reindex(idx).fillna(False).astype(bool)
 raw_close  = {"TQQQ": tqqq_cl, "SPXL": spxl_cl, "GLD": gld_cl, "QLD": qld_cl, "SSO": sso_cl, "IEF": ief_cl}
 div_series = {"TQQQ": div_tqqq, "SPXL": div_spxl, "GLD": div_gld, "QLD": div_qld, "SSO": div_sso, "IEF": div_ief}
 
+# Add sector rotation tickers to raw_close (for scoring)
+for sym in RISK_ON_3X_LINEUP + RISK_ON_2X_LINEUP:
+    if sym not in raw_close:
+        try:
+            _, ac_sym, _ = get_adj_ohlc(px, sym, idx)
+            raw_close[sym] = ac_sym
+            # Create empty div series for new tickers
+            div_series[sym] = pd.Series(0.0, index=idx)
+        except Exception:
+            raw_close[sym] = pd.Series(index=idx, dtype=float)
+            div_series[sym] = pd.Series(0.0, index=idx)
+
+# =========================
+# Tripwire demotion gate (Sprint 2) - Fast crash detection
+# =========================
+USE_TRIPWIRE = False  # Enable/disable tripwire demotion
+TRIPWIRE_COOLDOWN_DAYS = 5  # Business days to stay in state 0 after tripwire triggers
+
+# Sector rotation (Sprint 2)
+USE_SECTOR_ROTATION = False  # Enable/disable sector rotation in risk-on states
+TURBO_TICKERS = {"TECL", "SOXL", "FNGU", "TNA"}  # Turbo tickers (only when tripwire clear and VIX healthy)
+TURBO_VIX_THRESHOLD = 0.90  # VIX/VIX3M < this to allow turbo tickers
+
+def compute_tripwire_flags(d):
+    """Compute tripwire flags at date d. Returns (vix_bad, credit_bad, breadth_bad)"""
+    if not USE_TRIPWIRE:
+        return False, False, False
+    
+    flags = {"vix": False, "credit": False, "breadth": False}
+    
+    # VIX Flag: VIX/VIX3M > 1.00 (backwardation)
+    # Use VIX3M if available, fallback to ^VXV
+    if d in vix_ac.index and d in vix3m_fallback_ac.index:
+        vix_val = vix_ac.get(d, np.nan)
+        vix3m_val = vix3m_fallback_ac.get(d, np.nan)
+        if pd.notna(vix_val) and pd.notna(vix3m_val) and vix3m_val > 0:
+            flags["vix"] = (vix_val / vix3m_val) > 1.00
+    
+    # Credit Flag: HYG/LQD below 100D SMA AND 20D return < 0
+    # Use HYG if available, fallback to LQD
+    credit_ac = hyg_ac if hyg_ac.notna().sum() > lqd_ac.notna().sum() else lqd_ac
+    if d in credit_ac.index and credit_ac.notna().sum() > 100:
+        sma100 = credit_ac.rolling(100, min_periods=100).mean()
+        ret20 = credit_ac.pct_change(20)
+        sma_val = sma100.get(d, np.nan)
+        ret_val = ret20.get(d, np.nan)
+        price_val = credit_ac.get(d, np.nan)
+        if pd.notna(sma_val) and pd.notna(ret_val) and pd.notna(price_val):
+            flags["credit"] = (price_val < sma_val) and (ret_val < 0)
+    
+    # Breadth Flag: RSP/SPY below 100D SMA AND 20D return < 0
+    # Use RSP if available, fallback to SPY
+    breadth_ac = rsp_ac if rsp_ac.notna().sum() > spy_ac.notna().sum() else spy_ac
+    if d in breadth_ac.index and breadth_ac.notna().sum() > 100:
+        sma100 = breadth_ac.rolling(100, min_periods=100).mean()
+        ret20 = breadth_ac.pct_change(20)
+        sma_val = sma100.get(d, np.nan)
+        ret_val = ret20.get(d, np.nan)
+        price_val = breadth_ac.get(d, np.nan)
+        if pd.notna(sma_val) and pd.notna(ret_val) and pd.notna(price_val):
+            flags["breadth"] = (price_val < sma_val) and (ret_val < 0)
+    
+    return flags["vix"], flags["credit"], flags["breadth"]
+
 # =========================
 # Regime builders (dual-anchor)
 # =========================
@@ -575,6 +656,35 @@ def _weekly_state_from_anchor(anchor="W-FRI"):
     if USE_DD_THROTTLE:
         state_w[(state_w == 2) & (dd_w <= -DD_TH_2X)] = 1
         state_w[(state_w == 1) & (dd_w <= -DD_TH_2X)] = 0
+
+    # Tripwire demotion (Sprint 2): if 2+ flags bad at anchor and state >= 1, force state 0
+    if USE_TRIPWIRE:
+        tripwire_cooldown_until = pd.Timestamp("1900-01-01")
+        for i, d in enumerate(state_w.index):
+            # Check if we're still in cooldown (compare weekly anchor dates)
+            if tripwire_cooldown_until > pd.Timestamp("1900-01-01"):
+                # Find the next weekly anchor date after cooldown ends
+                next_anchors_after_cooldown = state_w.index[state_w.index > tripwire_cooldown_until]
+                if len(next_anchors_after_cooldown) > 0 and d < next_anchors_after_cooldown[0]:
+                    # Still in cooldown: force state 0
+                    state_w.iloc[i] = 0
+                    continue
+                else:
+                    # Cooldown expired
+                    tripwire_cooldown_until = pd.Timestamp("1900-01-01")
+            
+            if state_w.iloc[i] >= 1:
+                vix_bad, credit_bad, breadth_bad = compute_tripwire_flags(d)
+                bad_count = sum([vix_bad, credit_bad, breadth_bad])
+                
+                if bad_count >= 2:
+                    # Tripwire triggered: force state 0 and set cooldown
+                    state_w.iloc[i] = 0
+                    # Set cooldown: find the date TRIPWIRE_COOLDOWN_DAYS business days after anchor d
+                    pos = idx.searchsorted(d, side="right")
+                    cooldown_end_pos = min(len(idx) - 1, pos + TRIPWIRE_COOLDOWN_DAYS)
+                    if cooldown_end_pos < len(idx):
+                        tripwire_cooldown_until = idx[cooldown_end_pos]
 
     return state_w
 
@@ -688,6 +798,8 @@ def build_locked_schedule(run_idx):
     gap_map.update(gap_extra); intra_map.update(intra_extra)
 
     def has_data(sym, d):
+        if sym == "CASH":
+            return True  # CASH always available (uses rf_daily)
         if sym in {"TQQQ","SPXL","QLD","SSO","GLD"}:
             base_ac = {"TQQQ": tqqq_ac, "SPXL": spxl_ac, "QLD": qld_ac, "SSO": sso_ac, "GLD": gld_ac}[sym]
             return pd.notna(base_ac.get(d, np.nan))
@@ -696,12 +808,100 @@ def build_locked_schedule(run_idx):
         return pd.notna(ac_extra.get(sym, pd.Series(index=idx, dtype=float)).get(d, np.nan))
 
     def choose_risk_off(d):
+        # Cash fallback: if both GLD and IEF have negative 63D momentum, use CASH
         if USE_DUAL_RISK_OFF and HAVE_IEF:
-            return "GLD" if float(mom_gld_use.get(d, -1.0)) >= float(mom_ief_use.get(d, -1.0)) else "IEF"
+            mom_gld_val = float(mom_gld_use.get(d, -1.0))
+            mom_ief_val = float(mom_ief_use.get(d, -1.0))
+            if mom_gld_val < 0 and mom_ief_val < 0:
+                return "CASH"  # Both negative: use cash (risk-free rate)
+            return "GLD" if mom_gld_val >= mom_ief_val else "IEF"
         return "GLD"
 
+    # Sector rotation chooser (Sprint 2)
+    def choose_asset_sector_rotation(regime, d, lock_until):
+        """Select asset using momentum/volatility scoring for sector rotation"""
+        if regime == 0:
+            return choose_risk_off(d)
+        
+        # Determine universe based on regime
+        if regime == 2:  # 3x
+            universe = RISK_ON_3X_LINEUP.copy()
+        else:  # regime == 1, 2x
+            universe = RISK_ON_2X_LINEUP.copy()
+        
+        # Filter out locked tickers (Nasdaq lockout)
+        if d <= lock_until:
+            universe = [s for s in universe if s not in {"TQQQ", "QLD"}]
+        
+        # Check tripwire status and VIX term structure for turbo tickers
+        vix_bad, credit_bad, breadth_bad = compute_tripwire_flags(d)
+        tripwire_active = sum([vix_bad, credit_bad, breadth_bad]) >= 2
+        
+        # Check VIX term structure
+        vix_healthy = False
+        if d in vix_ac.index and d in vix3m_fallback_ac.index:
+            vix_val = vix_ac.get(d, np.nan)
+            vix3m_val = vix3m_fallback_ac.get(d, np.nan)
+            if pd.notna(vix_val) and pd.notna(vix3m_val) and vix3m_val > 0:
+                vix_healthy = (vix_val / vix3m_val) < TURBO_VIX_THRESHOLD
+        
+        # Filter turbo tickers if tripwire active or VIX unhealthy
+        if tripwire_active or not vix_healthy:
+            universe = [s for s in universe if s not in TURBO_TICKERS]
+        
+        # Score each candidate
+        scores = {}
+        for sym in universe:
+            # Check if we have enough data (≥126 trading days)
+            if sym not in raw_close:
+                continue
+            
+            sym_close = raw_close[sym]
+            if sym_close.isnull().all():
+                continue
+            
+            # Get returns up to date d (use close prices, compute daily returns)
+            sym_close_to_d = sym_close[sym_close.index <= d].dropna()
+            if len(sym_close_to_d) < 126:
+                continue
+            
+            # Compute daily returns from close prices
+            sym_ret_to_d = sym_close_to_d.pct_change().dropna()
+            if len(sym_ret_to_d) < 63:
+                continue
+            
+            # Momentum: 63-day total return
+            mom_63 = float((1 + sym_ret_to_d.tail(63)).prod() - 1.0)
+            
+            # Volatility: 20-day realized vol (annualized)
+            if len(sym_ret_to_d) >= 20:
+                vol_20 = float(sym_ret_to_d.tail(20).std() * math.sqrt(252))
+            else:
+                continue
+            
+            # Score: momentum / volatility
+            if vol_20 > 0:
+                scores[sym] = mom_63 / vol_20
+            else:
+                scores[sym] = -999.0  # Very bad score if no volatility
+        
+        if not scores:
+            # Fallback to original logic if no scores available
+            if regime == 2:
+                return "SPXL" if d <= lock_until else "TQQQ"
+            else:
+                return "SSO" if d <= lock_until else "QLD"
+        
+        # Return top-scoring asset
+        return max(scores.items(), key=lambda x: x[1])[0]
+    
     # Original selection (with PREFER_SPXL option)
     def choose_asset(regime, d, lock_until):
+        # Use sector rotation if enabled
+        if USE_SECTOR_ROTATION and regime >= 1:
+            return choose_asset_sector_rotation(regime, d, lock_until)
+        
+        # Original logic
         if regime == 2:   # 3x
             if PREFER_SPXL:
                 return "SPXL"  # Always SPXL when preferred (uses ^GSPC proxy pre-1993)
@@ -753,12 +953,16 @@ def build_locked_schedule(run_idx):
             base = choose_asset(regime, d, lockout_until)
             curr_asset = pick_available_from_lineup(base, regime, d, lockout_until)
             entry_date = d
-            leg_gross = 1.0 + intra_map[curr_asset].get(d, 0.0)
+            if curr_asset == "CASH":
+                leg_gross = 1.0 + float(rf_daily.get(d, FIN_FALLBACK_ANNUAL/252.0))
+            else:
+                leg_gross = 1.0 + intra_map[curr_asset].get(d, 0.0)
             sched.iloc[i] = curr_asset
             continue
 
         if d in swap_set:
-            leg_gross *= (1.0 + gap_map[curr_asset].get(d, 0.0))
+            if curr_asset != "CASH":
+                leg_gross *= (1.0 + gap_map[curr_asset].get(d, 0.0))
             if (curr_asset in {"TQQQ", "QLD"}) and (leg_gross - 1.0 < 0.0):
                 lockout_until = d + Day(LOCKOUT_DAYS)
 
@@ -767,10 +971,16 @@ def build_locked_schedule(run_idx):
 
             curr_asset = next_asset
             entry_date = d
-            leg_gross = 1.0 + intra_map[curr_asset].get(d, 0.0)
+            if curr_asset == "CASH":
+                leg_gross = 1.0 + float(rf_daily.get(d, FIN_FALLBACK_ANNUAL/252.0))
+            else:
+                leg_gross = 1.0 + intra_map[curr_asset].get(d, 0.0)
             sched.iloc[i] = curr_asset
         else:
-            leg_gross *= (1.0 + gap_map[curr_asset].get(d, 0.0)) * (1.0 + intra_map[curr_asset].get(d, 0.0))
+            if curr_asset == "CASH":
+                leg_gross *= (1.0 + float(rf_daily.get(d, FIN_FALLBACK_ANNUAL/252.0)))
+            else:
+                leg_gross *= (1.0 + gap_map[curr_asset].get(d, 0.0)) * (1.0 + intra_map[curr_asset].get(d, 0.0))
             sched.iloc[i] = curr_asset
 
     return sched
@@ -958,13 +1168,20 @@ def sim_strategy(run_idx, paper=False):
         if not hasattr(_build_weekly_alpha_for_asset, '_cache'):
             _build_weekly_alpha_for_asset._cache = {}
         assets_for_alpha = set(list(gap_map.keys()))
+        # Add CASH to alpha map (always 1.0, no vol targeting for cash)
+        assets_for_alpha.add("CASH")
         for a in assets_for_alpha:
-            if a not in _build_weekly_alpha_for_asset._cache:
+            if a == "CASH":
+                alpha_by_asset["CASH"] = pd.Series(1.0, index=idx)
+            elif a not in _build_weekly_alpha_for_asset._cache:
                 _build_weekly_alpha_for_asset._cache[a] = _build_weekly_alpha_for_asset(a, gap_map, intra_map)
-            alpha_by_asset[a] = _build_weekly_alpha_for_asset._cache[a]
+                alpha_by_asset[a] = _build_weekly_alpha_for_asset._cache[a]
+            else:
+                alpha_by_asset[a] = _build_weekly_alpha_for_asset._cache[a]
     else:
         # No vol targeting: set all alphas to 1.0 (full exposure)
         assets_for_alpha = set(list(gap_map.keys()))
+        assets_for_alpha.add("CASH")
         alpha_by_asset = {a: pd.Series(1.0, index=idx) for a in assets_for_alpha}
 
     # Drawdown throttle state tracking
@@ -1027,12 +1244,15 @@ def sim_strategy(run_idx, paper=False):
 
             if curr_asset is None:
                 curr_asset = next_asset
-                # First day: only intraday return (open-to-open is just intraday on entry day)
-                r_asset_raw = float(intra_map[curr_asset].get(d, 0.0))
-                
-                # Apply proxy drag to asset return, then volatility-targeted sizing
-                drag = proxy_drag(curr_asset, d)
-                r_asset = (1.0 + r_asset_raw) * drag - 1.0
+                # Handle CASH: use risk-free rate
+                if curr_asset == "CASH":
+                    r_asset = float(rf_daily.get(d, FIN_FALLBACK_ANNUAL/252.0))
+                else:
+                    # First day: only intraday return (open-to-open is just intraday on entry day)
+                    r_asset_raw = float(intra_map[curr_asset].get(d, 0.0))
+                    # Apply proxy drag to asset return, then volatility-targeted sizing
+                    drag = proxy_drag(curr_asset, d)
+                    r_asset = (1.0 + r_asset_raw) * drag - 1.0
                 
                 alpha_vt = float(alpha_by_asset.get(curr_asset, pd.Series(1.0, index=idx)).get(d, 1.0))
                 rf_t    = float(rf_daily.get(d, FIN_FALLBACK_ANNUAL/252.0))
@@ -1046,19 +1266,23 @@ def sim_strategy(run_idx, paper=False):
                 equity_curve.append(eq); daily_index.append(d)
                 continue
 
-            # Open-to-open daily return: (1 + gap) * (1 + intra) - 1
-            g = float(gap_map[curr_asset].get(d, 0.0))
-            if next_asset != curr_asset:
-                i_ret = float(intra_map[next_asset].get(d, 0.0))
-                r_asset_raw = (1.0 + g) * (1.0 + i_ret) - 1.0
-                curr_asset = next_asset
+            # Handle CASH: use risk-free rate
+            if curr_asset == "CASH":
+                r_asset = float(rf_daily.get(d, FIN_FALLBACK_ANNUAL/252.0))
             else:
-                i_ret = float(intra_map[curr_asset].get(d, 0.0))
-                r_asset_raw = (1.0 + g) * (1.0 + i_ret) - 1.0
+                # Open-to-open daily return: (1 + gap) * (1 + intra) - 1
+                g = float(gap_map[curr_asset].get(d, 0.0))
+                if next_asset != curr_asset:
+                    i_ret = float(intra_map[next_asset].get(d, 0.0))
+                    r_asset_raw = (1.0 + g) * (1.0 + i_ret) - 1.0
+                    curr_asset = next_asset
+                else:
+                    i_ret = float(intra_map[curr_asset].get(d, 0.0))
+                    r_asset_raw = (1.0 + g) * (1.0 + i_ret) - 1.0
 
-            # Apply proxy drag to asset return, then volatility-targeted sizing
-            drag = proxy_drag(curr_asset, d)
-            r_asset = (1.0 + r_asset_raw) * drag - 1.0
+                # Apply proxy drag to asset return, then volatility-targeted sizing
+                drag = proxy_drag(curr_asset, d)
+                r_asset = (1.0 + r_asset_raw) * drag - 1.0
             
             # Apply volatility-targeted sizing: r_eff = alpha * r_asset + (1-alpha) * rf
             alpha_vt = float(alpha_by_asset.get(curr_asset, pd.Series(1.0, index=idx)).get(d, 1.0))
@@ -1112,12 +1336,15 @@ def sim_strategy(run_idx, paper=False):
             entry_eq_pre_after_buy = eq_pre
             cum_div_leg_pre = 0.0
 
-            # First day: only intraday return (open-to-open is just intraday on entry day)
-            r_asset_raw = float(intra_map[curr_asset].get(d, 0.0))
-            
-            # Apply proxy drag to asset return, then volatility-targeted sizing
-            drag = proxy_drag(curr_asset, d)
-            r_asset = (1.0 + r_asset_raw) * drag - 1.0
+            # Handle CASH: use risk-free rate
+            if curr_asset == "CASH":
+                r_asset = float(rf_daily.get(d, FIN_FALLBACK_ANNUAL/252.0))
+            else:
+                # First day: only intraday return (open-to-open is just intraday on entry day)
+                r_asset_raw = float(intra_map[curr_asset].get(d, 0.0))
+                # Apply proxy drag to asset return, then volatility-targeted sizing
+                drag = proxy_drag(curr_asset, d)
+                r_asset = (1.0 + r_asset_raw) * drag - 1.0
             
             alpha_vt = float(alpha_by_asset.get(curr_asset, pd.Series(1.0, index=idx)).get(d, 1.0))
             rf_t = float(rf_daily.get(d, FIN_FALLBACK_ANNUAL/252.0))
@@ -1144,15 +1371,19 @@ def sim_strategy(run_idx, paper=False):
                 div_tax_by_year[y] += div_tax
                 cum_div_leg_pre += div_cash
 
-        # Open-to-open daily return: (1 + gap) * (1 + intra) - 1
-        g = float(gap_map[curr_asset].get(d, 0.0))
-        if next_asset != curr_asset:
-            i_ret = float(intra_map[next_asset].get(d, 0.0))
-            r_asset_raw = (1.0 + g) * (1.0 + i_ret) - 1.0
-            curr_asset = next_asset
+        # Handle CASH: use risk-free rate
+        if curr_asset == "CASH":
+            r_asset = float(rf_daily.get(d, FIN_FALLBACK_ANNUAL/252.0))
         else:
-            i_ret = float(intra_map[curr_asset].get(d, 0.0))
-            r_asset_raw = (1.0 + g) * (1.0 + i_ret) - 1.0
+            # Open-to-open daily return: (1 + gap) * (1 + intra) - 1
+            g = float(gap_map[curr_asset].get(d, 0.0))
+            if next_asset != curr_asset:
+                i_ret = float(intra_map[next_asset].get(d, 0.0))
+                r_asset_raw = (1.0 + g) * (1.0 + i_ret) - 1.0
+                curr_asset = next_asset
+            else:
+                i_ret = float(intra_map[curr_asset].get(d, 0.0))
+                r_asset_raw = (1.0 + g) * (1.0 + i_ret) - 1.0
 
         if next_asset != curr_asset:
             c = trade_cost(d)
@@ -1176,8 +1407,10 @@ def sim_strategy(run_idx, paper=False):
             cum_div_leg_pre = 0.0
 
         # Apply proxy drag to asset return, then volatility-targeted sizing
-        drag = proxy_drag(curr_asset, d)
-        r_asset = (1.0 + r_asset_raw) * drag - 1.0
+        if curr_asset != "CASH":
+            drag = proxy_drag(curr_asset, d)
+            r_asset = (1.0 + r_asset_raw) * drag - 1.0
+        # else: r_asset already set to rf_daily above
         
         # Apply volatility-targeted sizing: r_eff = alpha * r_asset + (1-alpha) * rf
         alpha_vt = float(alpha_by_asset.get(curr_asset, pd.Series(1.0, index=idx)).get(d, 1.0))
@@ -1634,39 +1867,208 @@ if not DO_WALK_FORWARD:
     weekly_signal_dashboard(window_start="2019-01-01", lookback_legs=20)
 
 else:
-    # Walk-forward validation with downside-only VT (baseline)
-    # Baseline chosen: downside-only VT provides best balance of CAGR and MaxDD protection
-    # - Final OOS: 21.51% CAGR vs 22.09% No VT (-0.58% give-up) with +16.28pp MaxDD improvement
-    # - Shadow OOS: 32.82% CAGR vs 50.85% No VT (-18.03% give-up) with +7.56pp MaxDD improvement
-    # - WF: 16.89% CAGR vs 19.84% No VT (-2.95% give-up) with +10.95pp MaxDD improvement
-    wf_curve, wf_tests = walk_forward_validation(
+    # Sprint 2: Test Tripwire variants
+    print(f"\n{'='*80}")
+    print("SPRINT 2: TRIPWIRE DEMOTION GATE TESTING")
+    print(f"{'='*80}")
+    print(f"\nPeriods used:")
+    print(f"  Walk-Forward: {WF_START_DATE} to {WF_END_DATE}")
+    print(f"  Shadow OOS: 2018-01-01 to 2020-12-31")
+    print(f"  Final OOS: 2021-01-01 to present")
+    print(f"\nTripwire: 2+ of 3 flags bad (VIX backwardation, Credit weak, Breadth weak)")
+    print(f"  Cooldown: {TRIPWIRE_COOLDOWN_DAYS} business days\n")
+    
+    # Save original settings
+    original_vol_targeting = USE_VOL_TARGETING
+    original_vt_mode = VT_MODE
+    original_tripwire = USE_TRIPWIRE
+    
+    # Test 1: No VT + Tripwire
+    print("=" * 80)
+    print("TEST 1: NO VT + TRIPWIRE")
+    print("=" * 80)
+    USE_VOL_TARGETING = False
+    USE_TRIPWIRE = True
+    VT_MODE = "downside_only"
+    if hasattr(_build_weekly_alpha_for_asset, '_cache'):
+        _build_weekly_alpha_for_asset._cache = {}
+    rebuild_regime()
+    
+    wf_curve_no_vt_trip, wf_tests_no_vt_trip = walk_forward_validation(
         WF_START_DATE, WF_END_DATE,
         WF_TRAIN_YEARS, WF_TEST_YEARS,
         paper=WF_USE_PAPER,
         chain_capital=WF_CHAIN_CAPITAL
     )
-    if wf_curve is not None and not wf_curve.empty:
-        m_wf = metrics_from_curve(wf_curve)
-        simMode = "Paper (No Taxes/Fees)" if WF_USE_PAPER else "Real (With Taxes/Fees)"
-        print(f"===== Walk-Forward Validation ({simMode}, chained, {WF_START_DATE} to {WF_END_DATE}) =====")
-        print(f"Strategy: 3-state dual-day on {SIGNAL_SYMBOL}, SMA {SMA_SLOW}/{SMA_MID}")
-        print(f"Volatility Targeting: {VT_MODE} (Target: {TARGET_VOL_ANNUAL*100:.0f}% annualized, downside-only)")
-        for (ts, te, m, _) in wf_tests:
-            print_metrics(f"Test window {ts} → {te}", m)
-        print_metrics("Aggregated WF tests (chained)", m_wf)
-        # Shadow OOS: 2018–2020
-        print("\n===== Shadow OOS (2018–2020) =====")
-        cp_s, cr_s, m_s = run_segment("Shadow OOS", "2018-01-01", "2020-12-31")
-        if m_s:
-            print_metrics("Shadow OOS (Paper)", m_s[0])
-            print_metrics("Shadow OOS (Real)",  m_s[1])
-        # Final OOS: 2021+
-        print("\n===== Final OOS (2021+) =====")
-        cp_f, cr_f, m_f = run_segment("Final OOS", "2021-01-01", None)
-        if m_f:
-            print_metrics("Final OOS (Paper)", m_f[0])
-            print_metrics("Final OOS (Real)",  m_f[1])
-    else:
-        print(f"===== Walk-Forward Validation ({WF_START_DATE} to {WF_END_DATE}) =====")
-        print("No data available for this period or configuration.")
-        print(f"Check SMA warm-up and if WF_TRAIN_YEARS ({WF_TRAIN_YEARS}) is too long for the period.")
+    
+    results_no_vt_trip = {}
+    if wf_curve_no_vt_trip is not None and not wf_curve_no_vt_trip.empty:
+        m_wf_no_vt_trip = metrics_from_curve(wf_curve_no_vt_trip)
+        results_no_vt_trip['wf'] = m_wf_no_vt_trip
+        cp_s_no_vt_trip, cr_s_no_vt_trip, m_s_no_vt_trip = run_segment("Shadow OOS", "2018-01-01", "2020-12-31")
+        if m_s_no_vt_trip:
+            results_no_vt_trip['shadow'] = m_s_no_vt_trip[0] if WF_USE_PAPER else m_s_no_vt_trip[1]
+        cp_f_no_vt_trip, cr_f_no_vt_trip, m_f_no_vt_trip = run_segment("Final OOS", "2021-01-01", None)
+        if m_f_no_vt_trip:
+            results_no_vt_trip['final'] = m_f_no_vt_trip[0] if WF_USE_PAPER else m_f_no_vt_trip[1]
+    
+    # Test 2: Downside-VT (current) + Tripwire
+    print("\n" + "=" * 80)
+    print("TEST 2: DOWNSIDE-VT (BASELINE) + TRIPWIRE")
+    print("=" * 80)
+    USE_VOL_TARGETING = True
+    USE_TRIPWIRE = True
+    VT_MODE = "downside_only"
+    if hasattr(_build_weekly_alpha_for_asset, '_cache'):
+        _build_weekly_alpha_for_asset._cache = {}
+    rebuild_regime()
+    
+    wf_curve_downside_trip, wf_tests_downside_trip = walk_forward_validation(
+        WF_START_DATE, WF_END_DATE,
+        WF_TRAIN_YEARS, WF_TEST_YEARS,
+        paper=WF_USE_PAPER,
+        chain_capital=WF_CHAIN_CAPITAL
+    )
+    
+    results_downside_trip = {}
+    if wf_curve_downside_trip is not None and not wf_curve_downside_trip.empty:
+        m_wf_downside_trip = metrics_from_curve(wf_curve_downside_trip)
+        results_downside_trip['wf'] = m_wf_downside_trip
+        cp_s_downside_trip, cr_s_downside_trip, m_s_downside_trip = run_segment("Shadow OOS", "2018-01-01", "2020-12-31")
+        if m_s_downside_trip:
+            results_downside_trip['shadow'] = m_s_downside_trip[0] if WF_USE_PAPER else m_s_downside_trip[1]
+        cp_f_downside_trip, cr_f_downside_trip, m_f_downside_trip = run_segment("Final OOS", "2021-01-01", None)
+        if m_f_downside_trip:
+            results_downside_trip['final'] = m_f_downside_trip[0] if WF_USE_PAPER else m_f_downside_trip[1]
+    
+    # Test 3: Light VT (state-2 only) + Tripwire
+    print("\n" + "=" * 80)
+    print("TEST 3: LIGHT VT (STATE-2 ONLY) + TRIPWIRE")
+    print("=" * 80)
+    USE_VOL_TARGETING = True
+    USE_TRIPWIRE = True
+    VT_MODE = "regime_dependent"
+    # Light VT: State 2: σ*=0.40-0.45, State 1: σ*=0.25, State 0: no VT
+    VT_TARGET_BY_REGIME[2] = 0.40  # Test 0.40 first
+    VT_TARGET_BY_REGIME[1] = 0.25
+    VT_TARGET_BY_REGIME[0] = None
+    VT_ALPHA_MIN_BY_REGIME[2] = 0.60
+    VT_ALPHA_MIN_BY_REGIME[1] = 0.40
+    if hasattr(_build_weekly_alpha_for_asset, '_cache'):
+        _build_weekly_alpha_for_asset._cache = {}
+    rebuild_regime()
+    
+    wf_curve_light_vt_trip, wf_tests_light_vt_trip = walk_forward_validation(
+        WF_START_DATE, WF_END_DATE,
+        WF_TRAIN_YEARS, WF_TEST_YEARS,
+        paper=WF_USE_PAPER,
+        chain_capital=WF_CHAIN_CAPITAL
+    )
+    
+    results_light_vt_trip = {}
+    if wf_curve_light_vt_trip is not None and not wf_curve_light_vt_trip.empty:
+        m_wf_light_vt_trip = metrics_from_curve(wf_curve_light_vt_trip)
+        results_light_vt_trip['wf'] = m_wf_light_vt_trip
+        cp_s_light_vt_trip, cr_s_light_vt_trip, m_s_light_vt_trip = run_segment("Shadow OOS", "2018-01-01", "2020-12-31")
+        if m_s_light_vt_trip:
+            results_light_vt_trip['shadow'] = m_s_light_vt_trip[0] if WF_USE_PAPER else m_s_light_vt_trip[1]
+        cp_f_light_vt_trip, cr_f_light_vt_trip, m_f_light_vt_trip = run_segment("Final OOS", "2021-01-01", None)
+        if m_f_light_vt_trip:
+            results_light_vt_trip['final'] = m_f_light_vt_trip[0] if WF_USE_PAPER else m_f_light_vt_trip[1]
+    
+    # Baseline: Downside-VT (no tripwire) for comparison
+    print("\n" + "=" * 80)
+    print("BASELINE: DOWNSIDE-VT (NO TRIPWIRE)")
+    print("=" * 80)
+    USE_VOL_TARGETING = True
+    USE_TRIPWIRE = False
+    VT_MODE = "downside_only"
+    if hasattr(_build_weekly_alpha_for_asset, '_cache'):
+        _build_weekly_alpha_for_asset._cache = {}
+    rebuild_regime()
+    
+    wf_curve_downside, wf_tests_downside = walk_forward_validation(
+        WF_START_DATE, WF_END_DATE,
+        WF_TRAIN_YEARS, WF_TEST_YEARS,
+        paper=WF_USE_PAPER,
+        chain_capital=WF_CHAIN_CAPITAL
+    )
+    
+    results_downside = {}
+    if wf_curve_downside is not None and not wf_curve_downside.empty:
+        m_wf_downside = metrics_from_curve(wf_curve_downside)
+        results_downside['wf'] = m_wf_downside
+        cp_s_downside, cr_s_downside, m_s_downside = run_segment("Shadow OOS", "2018-01-01", "2020-12-31")
+        if m_s_downside:
+            results_downside['shadow'] = m_s_downside[0] if WF_USE_PAPER else m_s_downside[1]
+        cp_f_downside, cr_f_downside, m_f_downside = run_segment("Final OOS", "2021-01-01", None)
+        if m_f_downside:
+            results_downside['final'] = m_f_downside[0] if WF_USE_PAPER else m_f_downside[1]
+    
+    # Original: No VT, no tripwire
+    print("\n" + "=" * 80)
+    print("ORIGINAL: NO VT, NO TRIPWIRE")
+    print("=" * 80)
+    USE_VOL_TARGETING = False
+    USE_TRIPWIRE = False
+    if hasattr(_build_weekly_alpha_for_asset, '_cache'):
+        _build_weekly_alpha_for_asset._cache = {}
+    rebuild_regime()
+    
+    wf_curve_no_vt, wf_tests_no_vt = walk_forward_validation(
+        WF_START_DATE, WF_END_DATE,
+        WF_TRAIN_YEARS, WF_TEST_YEARS,
+        paper=WF_USE_PAPER,
+        chain_capital=WF_CHAIN_CAPITAL
+    )
+    
+    results_no_vt = {}
+    if wf_curve_no_vt is not None and not wf_curve_no_vt.empty:
+        m_wf_no_vt = metrics_from_curve(wf_curve_no_vt)
+        results_no_vt['wf'] = m_wf_no_vt
+        cp_s_no_vt, cr_s_no_vt, m_s_no_vt = run_segment("Shadow OOS", "2018-01-01", "2020-12-31")
+        if m_s_no_vt:
+            results_no_vt['shadow'] = m_s_no_vt[0] if WF_USE_PAPER else m_s_no_vt[1]
+        cp_f_no_vt, cr_f_no_vt, m_f_no_vt = run_segment("Final OOS", "2021-01-01", None)
+        if m_f_no_vt:
+            results_no_vt['final'] = m_f_no_vt[0] if WF_USE_PAPER else m_f_no_vt[1]
+    
+    # Restore original settings
+    USE_VOL_TARGETING = original_vol_targeting
+    VT_MODE = original_vt_mode
+    USE_TRIPWIRE = original_tripwire
+    rebuild_regime()
+    
+    # Print comparison
+    print("\n" + "=" * 80)
+    print("TRIPWIRE COMPARISON RESULTS")
+    print("=" * 80)
+    
+    def print_comparison_tripwire(name, m_no_vt_trip, m_downside_trip, m_light_vt_trip, m_downside_base, m_no_vt_base):
+        if not all([m_no_vt_trip, m_downside_trip, m_light_vt_trip, m_downside_base, m_no_vt_base]):
+            return
+        print(f"\n{name}:")
+        print(f"{'Metric':<20} {'NoVT+Trip':>15} {'DownVT+Trip':>15} {'LightVT+Trip':>15} {'DownVT':>15} {'NoVT':>15}")
+        print("-" * 95)
+        for key in ['CAGR', 'MaxDD', 'AnnVol', 'Sharpe', 'Sortino', 'Calmar']:
+            no_vt_trip_val = m_no_vt_trip.get(key, np.nan)
+            downside_trip_val = m_downside_trip.get(key, np.nan)
+            light_vt_trip_val = m_light_vt_trip.get(key, np.nan)
+            downside_base_val = m_downside_base.get(key, np.nan)
+            no_vt_base_val = m_no_vt_base.get(key, np.nan)
+            if not (np.isnan(no_vt_trip_val) or np.isnan(downside_trip_val) or np.isnan(light_vt_trip_val) or np.isnan(downside_base_val) or np.isnan(no_vt_base_val)):
+                if key == 'MaxDD':
+                    print(f"{key:<20} {fmt_pct(no_vt_trip_val):>15} {fmt_pct(downside_trip_val):>15} {fmt_pct(light_vt_trip_val):>15} {fmt_pct(downside_base_val):>15} {fmt_pct(no_vt_base_val):>15}")
+                else:
+                    print(f"{key:<20} {no_vt_trip_val:>15.4f} {downside_trip_val:>15.4f} {light_vt_trip_val:>15.4f} {downside_base_val:>15.4f} {no_vt_base_val:>15.4f}")
+            else:
+                print(f"{key:<20} {'nan':>15} {'nan':>15} {'nan':>15} {'nan':>15} {'nan':>15}")
+    
+    if all([results_no_vt_trip.get('wf'), results_downside_trip.get('wf'), results_light_vt_trip.get('wf'), results_downside.get('wf'), results_no_vt.get('wf')]):
+        print_comparison_tripwire("Walk-Forward (1963-2017)", results_no_vt_trip['wf'], results_downside_trip['wf'], results_light_vt_trip['wf'], results_downside['wf'], results_no_vt['wf'])
+    if all([results_no_vt_trip.get('shadow'), results_downside_trip.get('shadow'), results_light_vt_trip.get('shadow'), results_downside.get('shadow'), results_no_vt.get('shadow')]):
+        print_comparison_tripwire("Shadow OOS (2018-2020)", results_no_vt_trip['shadow'], results_downside_trip['shadow'], results_light_vt_trip['shadow'], results_downside['shadow'], results_no_vt['shadow'])
+    if all([results_no_vt_trip.get('final'), results_downside_trip.get('final'), results_light_vt_trip.get('final'), results_downside.get('final'), results_no_vt.get('final')]):
+        print_comparison_tripwire("Final OOS (2021+)", results_no_vt_trip['final'], results_downside_trip['final'], results_light_vt_trip['final'], results_downside['final'], results_no_vt['final'])
+    
+    print("\n" + "=" * 80)
