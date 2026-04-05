@@ -1,0 +1,15 @@
+{
+  "label": "Mag 7 cap-weighted forward P/E",
+  "metric": "mag7_forward_pe_cap_weighted",
+  "basis": "forward",
+  "source": "offline_script",
+  "script_version": "1",
+  "methodology_note": "Each point is produced by scripts/refresh_mag7_valuation_history.py using backend fmp_client.compute_mag7_basket (same MAG7 tickers, cap weights, coverage rules as the live dashboard). Not recomputed on page load.",
+  "last_refreshed": "2026-04-01",
+  "history": [
+    {
+      "date": "2026-04-01",
+      "value": 21.4569
+    }
+  ]
+}

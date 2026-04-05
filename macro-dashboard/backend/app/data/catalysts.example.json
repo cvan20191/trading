@@ -1,0 +1,54 @@
+{
+  "_comment": "Speaker-faithful catalyst config. Copy to catalysts.json and update manually.",
+  "mega_ipos": [
+    {
+      "name": "SpaceX",
+      "status": "on_track",
+      "target_valuation": "$1T–$1.5T",
+      "notes": "The speaker treats SpaceX as the ultimate liquidity litmus test — if this cannot get done cleanly at scale, it signals the market is not as deep as the tape suggests."
+    },
+    {
+      "name": "OpenAI",
+      "status": "rumored",
+      "target_valuation": null,
+      "notes": "AI thematic demand test. Valuation reception will signal how much premium the market still puts on AI narrative."
+    },
+    {
+      "name": "Anthropic",
+      "status": "rumored",
+      "target_valuation": null,
+      "notes": "Secondary AI thematic test alongside OpenAI."
+    }
+  ],
+  "fed_chair": [
+    {
+      "name": "Kevin Hassett",
+      "status": "contender",
+      "tone": "bullish_fast_cuts",
+      "notes": "More politically aligned with aggressive cut path. Speaker interprets as equity-supportive and faster-easing bias."
+    },
+    {
+      "name": "Chris Waller",
+      "status": "contender",
+      "tone": "hawkish_inflation_wary",
+      "notes": "Data-dependent. More cautious on rushing cuts before inflation is clearly beaten."
+    },
+    {
+      "name": "Kevin Warsh",
+      "status": "contender",
+      "tone": "hawkish_inflation_wary",
+      "notes": "Historically credibility-focused. Slower, more careful easing path."
+    }
+  ],
+  "tariffs": {
+    "tariff_status": "watch",
+    "tariff_pressure_active": false,
+    "notes": "Track tariff escalation as an inflation pass-through risk. If tariffs broaden and escalate, they can keep CPI stickier even as growth weakens — a direct stagflation complication."
+  },
+  "plumbing": {
+    "repo_status": "unknown",
+    "reverse_repo_status": "unknown",
+    "reserve_status": "unknown",
+    "notes": "The speaker distinguishes between genuine QE and emergency liquidity plumbing. Emergency operations can signal stress rather than bullish expansion."
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "_comment": "Curated historical context notes for the Replay Lab. Each entry covers a date range and explains the macro narrative of that period in speaker-faithful language. Do not use as a news feed — these are educational anchors for understanding the playbook in context.",
+  "notes": [
+    {
+      "date_start": "2020-02-01",
+      "date_end": "2020-05-31",
+      "title": "COVID Crash & Emergency Fed Response",
+      "body": "The Fed moved from a stable, slowly-normalizing posture to an emergency maximum-liquidity regime within weeks. Rates were cut to zero, QE was relaunched at historic scale, and the balance sheet expanded explosively. The key lesson: liquidity injection at this scale typically precedes a powerful market recovery even when economic data collapses — the 'shrewd animal' front-runs the liquidity, not the GDP print.",
+      "tags": ["fed", "liquidity", "crash-risk", "rates", "balance-sheet"]
+    },
+    {
+      "date_start": "2021-11-01",
+      "date_end": "2022-02-28",
+      "title": "Inflation Surprise & Taper Pivot",
+      "body": "Core CPI began consistently printing above 5–6% YoY for the first time in 40 years. The Fed, which had been calling inflation 'transitory', pivoted sharply toward tightening. Balance sheet tapering was announced and rate hikes were telegraphed. This period represents the entry into the stagflation-risk zone — growth was still positive but inflation was threatening to trap the Fed. Oil and shelter components were both accelerating.",
+      "tags": ["inflation", "fed", "rates", "stagflation", "cpi"]
+    },
+    {
+      "date_start": "2022-06-01",
+      "date_end": "2022-10-31",
+      "title": "Aggressive Hiking Cycle — Max Illiquidity",
+      "body": "The Fed began hiking at the fastest pace since 1980 — 75bps increments. The balance sheet was actively shrinking (QT). Both levers were restrictive simultaneously, placing the macro engine firmly in the 'max illiquidity' quadrant. Valuation multiples on big tech compressed sharply from stretched levels (>30x) toward and through the speaker's accumulation zone. The yield curve inverted deeply. This is the textbook 'Crash Watch / Defensive Regime' macro environment.",
+      "tags": ["fed", "rates", "balance-sheet", "illiquidity", "valuation", "yield-curve"]
+    },
+    {
+      "date_start": "2022-10-01",
+      "date_end": "2023-01-31",
+      "title": "Peak CPI & First Signals of Disinflation",
+      "body": "CPI peaked around 9% in mid-2022 and began a consistent rollover. Core CPI was stickier, but goods inflation was clearly cooling. The Fed was still hiking, but the terminal rate debate began. Markets began pricing in a pivot 6–9 months ahead. Valuation multiples had already compressed close to the historical accumulation zone for quality tech. The 'shrewd animal' behavior emerged: markets bottomed before CPI was conclusively beaten.",
+      "tags": ["inflation", "cpi", "disinflation", "fed", "valuation", "rates"]
+    },
+    {
+      "date_start": "2023-03-01",
+      "date_end": "2023-05-31",
+      "title": "SVB Failure & Systemic Stress Spike",
+      "body": "Silicon Valley Bank collapsed in March 2023, triggering a brief but sharp spike in systemic stress indicators. Bank NPL proxies ticked up, the yield curve remained deeply inverted, and credit conditions tightened rapidly. The Fed responded with emergency BTFP liquidity (Bank Term Funding Program) — a targeted injection that expanded the effective balance sheet even as QT continued. This is a key case study in the difference between genuine QE and emergency plumbing liquidity.",
+      "tags": ["crash-risk", "systemic-stress", "npl", "fed", "plumbing", "liquidity"]
+    },
+    {
+      "date_start": "2023-11-01",
+      "date_end": "2024-03-31",
+      "title": "Soft Landing Narrative & Valuation Reset",
+      "body": "The Fed paused hikes in late 2023 as CPI continued rolling toward 3%. Unemployment remained low but stable. Growth was decelerating but not collapsing. The balance sheet was still contracting, but at a slower pace. Markets aggressively priced in rate cuts for 2024. Valuation multiples on Mag 7 names re-expanded rapidly, pushing the forward P/E back toward and above the neutral zone (26–29x). The macro regime transitioned from 'Defensive / Stagflation Risk' toward 'Liquidity Transition'.",
+      "tags": ["soft-landing", "fed", "rates", "valuation", "inflation", "liquidity-transition"]
+    }
+  ]
+}

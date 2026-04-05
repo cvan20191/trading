@@ -1,0 +1,50 @@
+cursor_mac_id_modifier.sh
+
+# Local catalyst config — copy of catalysts.example.json for local use; not tracked
+macro-dashboard/backend/app/data/catalysts.json
+
+# Local env files (never commit secrets)
+macro-dashboard/backend/.env
+macro-dashboard/backend/.env.*
+!macro-dashboard/backend/.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# --- Node / frontend (macro-dashboard) ---
+macro-dashboard/frontend/node_modules/
+macro-dashboard/frontend/dist/
+macro-dashboard/frontend/.vite/
+
+# --- Runtime / local cache (regenerate locally) ---
+macro-dashboard/backend/.cache/
+
+# --- OS & editors ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# --- Large media / lectures (keep local only unless you intend to version them) ---
+*.mp4
+
+# --- Ad-hoc backtest / sprint dumps (regenerated outputs) ---
+3StateMachineEngine/*_output.txt
+3StateMachineEngine/sprint*_results.txt
